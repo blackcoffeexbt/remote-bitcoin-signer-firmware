@@ -4,7 +4,7 @@ A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. The mobile wallet or LNbi
 
 ## Mobile app
 
-The React Native / Expo project in [`mobile/`](mobile/README.md) starts with a
+The React Native / Expo project in [`../mobile/`](../mobile/README.md) starts with a
 Testnet4 wallet client for Android and iOS. It pairs with the ESP32, syncs through
 a configurable Electrs server, offers coin control and mempool.space fee estimates,
 builds PSBTs locally, verifies device signatures and explicitly broadcasts in-app.
@@ -12,7 +12,7 @@ LNbits is not required by the phone. Bitcoin keys and signing stay on the ESP32.
 verified. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
 documents user interactions, Nostr event structures, security boundaries and
 phases toward the first live signing MVP. Local Android Studio/Xcode and
-physical-device testing instructions are in the [mobile guide](mobile/README.md).
+physical-device testing instructions are in the [mobile guide](../mobile/README.md).
 
 ## Build and install
 
@@ -36,7 +36,7 @@ The reference project is unchanged. Its ArduinoGFX/AXS15231B display and touch i
 
 ## First use with LNbits (alternative client)
 
-For the standalone mobile wallet, follow the [in-app wallet flow](mobile/README.md#working-wallet-flow).
+For the standalone mobile wallet, follow the [in-app wallet flow](../mobile/README.md#working-wallet-flow).
 
 1. On first setup choose a **settings PIN** of 6–32 digits, then choose **Continue wallet setup**. This PIN controls device settings independently of wallet decryption. Generate a recovery phrase, write it down, and verify all 12 words in order by tapping each word from four choices. Correct answers advance immediately; incorrect answers show “Incorrect word”. Alternatively restore a 12- or 24-word phrase. Set a separate 6–32 digit **wallet PIN**. The recovery phrase stays on the device. During signing, the paired browser sends the PIN directly to the device inside a signed, NIP-44 encrypted Nostr message; the LNbits server does not receive it.
 2. On the touchscreen open **Settings**, enter the settings PIN, then choose **Network settings**. Join the temporary **Bitcoin-Signer-…** Wi-Fi network using the displayed password or QR code, then open **http://192.168.4.1/** on your phone or computer. Choose **Scan for Wi-Fi** and select your network, or enter its name manually. Enter the Wi-Fi password (use **Show password** to check it) and one to three `wss://` relay URLs. The default relay is `wss://relay.nostrconnect.com`. Choose **Save and connect**. The setup access point closes after submission, on **Close setup Wi-Fi**, or after ten minutes. Network setup requires the settings PIN; it never decrypts the wallet. Relays must accept experimental ephemeral event kind **24134**, allow browser connections, and support the configured message sizes. Connections validate TLS certificates. Wait for network time synchronization.
@@ -74,7 +74,7 @@ Daily usage counts all signing reservations, including manually approved transac
 
 ```sh
 python3 scripts/test-native.py
-lnbits/.venv/bin/python tests/test_signing.py
+../lnbits/.venv/bin/python tests/test_signing.py
 clang++ -std=c++17 -fsanitize=address,undefined tests/protocol.cpp -o /tmp/bitcoin-protocol-tests
 /tmp/bitcoin-protocol-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/approval-policy.cpp -o /tmp/approval-policy-tests
@@ -88,7 +88,7 @@ node --test tests/nostr-client.test.mjs tests/nostr-pairing-import.test.mjs
 
 The native validator and signer are the production C++ code, compiled with address/undefined-behavior sanitizers. Tests compare its signature and final transaction against independent libwally vectors and reject malformed or dishonest PSBTs. Browser tests use real Nostr signatures and NIP-44 encryption with simulated relay sockets. If Node dependencies live elsewhere, set `LNBITS_PACKAGE` to that checkout's absolute `package.json` path.
 
-The focused LNbits tests live in `lnbits/tests/unit/onchain/test_psbt.py`. Normal LNbits checks and dependencies apply.
+The focused LNbits tests live in `../lnbits/tests/unit/onchain/test_psbt.py`. Normal LNbits checks and dependencies apply.
 
 For hardware-only recovery/encryption checks:
 
@@ -120,3 +120,11 @@ Verify LNbits displays the limit reason and “Waiting for on device approval”
 per-transaction, daily and combined limits. Approval/rejection must still be bound
 to the active request; invalid PSBTs must not increment PIN failures. A firmware
 build and native tests do not establish physical erasure or live relay delivery.
+
+## Repository layout
+
+This is the firmware Git repository. Run all build and test commands from this
+directory. The mobile app and LNbits are independent sibling repositories at
+`../mobile/` and `../lnbits/`. Firmware builds do not require either checkout;
+optional LNbits interoperability tests use the sibling LNbits checkout.
+The full pre-split history is retained; mobile has its own extracted history.

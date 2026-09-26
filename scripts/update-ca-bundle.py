@@ -25,5 +25,5 @@ with tempfile.TemporaryDirectory() as temp:
     "# Public TLS root certificates\n\n"
     f"Generated from certifi {certifi.__version__} using the vendored ESP certificate bundle generator.\n\n"
     f"Source PEM SHA-256: `{hashlib.sha256(Path(certifi.where()).read_bytes()).hexdigest()}`.\n\n"
-    "Refresh with `lnbits/.venv/bin/python scripts/update-ca-bundle.py`, then rebuild firmware.\n"
+    "Refresh with `../lnbits/.venv/bin/python scripts/update-ca-bundle.py`, then rebuild firmware.\n"
 )

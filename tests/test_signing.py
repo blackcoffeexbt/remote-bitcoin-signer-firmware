@@ -1,5 +1,5 @@
 """Independent libwally checks of the firmware's actual C++ validation and signatures.
-Run with lnbits/.venv/bin/python tests/test_signing.py after scripts/test-native.py.
+Run with ../lnbits/.venv/bin/python tests/test_signing.py after scripts/test-native.py.
 """
 
 import base64
@@ -13,7 +13,7 @@ import wallycore as w
 
 ROOT = Path(__file__).resolve().parents[1]
 VECTORS = json.loads(
-    (ROOT / "lnbits/tests/unit/onchain/bitcoin_vectors.json").read_text()
+    (ROOT.parent / "lnbits/tests/unit/onchain/bitcoin_vectors.json").read_text()
 )
 VECTOR = next(
     v for v in VECTORS["signing"] if v["kind"] == "wpkh" and v["network"] == "test"

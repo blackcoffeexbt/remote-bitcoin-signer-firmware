@@ -3,9 +3,9 @@ import {test} from 'node:test'
 import {readFileSync} from 'node:fs'
 import {createRequire} from 'node:module'
 import {webcrypto} from 'node:crypto'
-const require = createRequire(process.env.LNBITS_PACKAGE || new URL('../lnbits/package.json', import.meta.url))
+const require = createRequire(process.env.LNBITS_PACKAGE || new URL('../../lnbits/package.json', import.meta.url))
 const tools = require('nostr-tools')
-const source = readFileSync(new URL('../lnbits/lnbits/onchain/static/js/nostr-signer-client.js', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../../lnbits/lnbits/onchain/static/js/nostr-signer-client.js', import.meta.url), 'utf8')
 const {NostrBitcoinSigner, parsePairing, BITCOIN_SIGNER_KIND} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
 class Socket {
   constructor(url) {this.url=url;this.readyState=0;this.sent=[]}

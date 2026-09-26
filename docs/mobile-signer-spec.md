@@ -42,9 +42,9 @@ Source of truth: `src/main.cpp` (screens), `src/engine.cpp` (orchestration),
 `src/protocol_state.h` (freshness/replay/session checks), `src/wallet.h`,
 `src/validation.h`, `src/signing.h`, `src/device_settings.h`, and
 `src/approval_policy.h`. The locally included, separately managed LNbits checkout
-contains `lnbits/lnbits/onchain/static/js/nostr-signer-client.js`,
+contains `../lnbits/lnbits/onchain/static/js/nostr-signer-client.js`,
 `static/components/nostr-signer.js`, `static/components/payment.js`, and `psbt.py`
-under its onchain directory. It is ignored by this repository, so mobile code
+under its onchain directory. It is a separate sibling repository, so mobile code
 must not depend on that checkout being installed. See also [protocol.md](protocol.md).
 
 ## Existing ESP32 / LNbits reference journey
@@ -437,7 +437,7 @@ broadcast; always-on background signing; Taproot/multisig inputs.
 
 Automated tests do not establish real ESP32 interoperability or physical-device
 UI behavior. Record actual device/OS/firmware/app versions when completing these
-gates. See [mobile/README.md](../mobile/README.md) for build and test instructions.
+gates. See [mobile/README.md](../../mobile/README.md) for build and test instructions.
 
 ## References
 

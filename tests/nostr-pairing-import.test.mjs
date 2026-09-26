@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import vm from 'node:vm'
-const source = readFileSync(new URL('../lnbits/lnbits/onchain/static/components/nostr-signer.js', import.meta.url), 'utf8').replace(/^import .*\n/, '')
+const source = readFileSync(new URL('../../lnbits/lnbits/onchain/static/components/nostr-signer.js', import.meta.url), 'utf8').replace(/^import .*\n/, '')
 function fixture({accounts = [], failPair = false, failImport = false} = {}) {
   let component
   const calls = [], notices = [], events = [], storage = new Map()
@@ -141,7 +141,7 @@ test('submitting the PIN immediately clears the field while waiting for the devi
 })
 
 test('an imported Nostr wallet selects its signer before any manual connection', () => {
-  const walletSource = readFileSync(new URL('../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
+  const walletSource = readFileSync(new URL('../../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
   const component = vm.runInNewContext('(' + walletSource.split('export default ')[1] + ')')
   const nostr = {}, serial = {}, trezor = {}
   const state = {selectedWallet: {meta: {signer: 'nostr'}}, connectedDeviceType: null,
@@ -169,10 +169,10 @@ test('Sign with device selects a saved pairing, connects, creates a full PSBT an
   const reloaded = fixture()
   reloaded.storage.set('user:wallet', paired.storage.get('user:wallet'))
   reloaded.instance.isNostrSigner = true
-  const walletSource = readFileSync(new URL('../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
+  const walletSource = readFileSync(new URL('../../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
   const walletComponent = vm.runInNewContext('(' + walletSource.split('export default ')[1] + ')')
   let paymentComponent
-  const paymentSource = readFileSync(new URL('../lnbits/lnbits/onchain/static/components/payment.js', import.meta.url), 'utf8').replace(/^import .*\n/gm, '')
+  const paymentSource = readFileSync(new URL('../../lnbits/lnbits/onchain/static/components/payment.js', import.meta.url), 'utf8').replace(/^import .*\n/gm, '')
   vm.runInNewContext(paymentSource, {window: {app: {component: (_, value) => { paymentComponent = value }}}})
   const notices = [], calls = []
   const disconnectedSerial = {isConnected: () => false}
@@ -204,7 +204,7 @@ test('Sign with device selects a saved pairing, connects, creates a full PSBT an
 })
 
 test('saved pairing selection is scoped to the current wallet and Testnet4', async () => {
-  const source = readFileSync(new URL('../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../../lnbits/lnbits/onchain/static/wallet.js', import.meta.url), 'utf8')
   const component = vm.runInNewContext('(' + source.split('export default ')[1] + ')')
   for (const [network, paired] of [['Mainnet', true], ['Testnet4', false]]) {
     const state = {config: {network}, connectedDeviceType: 'trezor-device',
