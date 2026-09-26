@@ -143,8 +143,8 @@ bool send(const String &type, const String &text = "", const String &data = "",
 }
 void pinSetup() {
     screen("Choose PIN");
-    label(
-        "6-32 digits. Needed after every restart. Back up the recovery phrase before continuing.");
+    label("6-32 digits. Needed for each signing request. Back up the recovery phrase before "
+          "continuing.");
     input1 = input("PIN", true, false, true);
     input2 = input("Confirm PIN", true, false, true);
     button("Save wallet", [](lv_event_t *) {
@@ -221,10 +221,17 @@ void lockScreen(const String &text) {
     unlocked = false;
     screen("Bitcoin signer - locked");
     label(text);
-    input1 = input("PIN", true, false, true);
-    button("Unlock", [](lv_event_t *) {
-        send("unlock", value(input1));
-        lv_textarea_set_text(input1, "");
+    label("Connects to Wi-Fi and relays automatically. Start signing in LNbits to enter your PIN.");
+    button("Unlock settings", [](lv_event_t *) {
+        screen("Unlock device settings");
+        input1 = input("PIN", true, false, true);
+        button("Unlock", [](lv_event_t *) {
+            String pin = value(input1);
+            send("unlock", pin);
+            Wallet::wipe(pin);
+            lv_textarea_set_text(input1, "");
+        });
+        button("Back", [](lv_event_t *) { home(); });
     });
 }
 void welcome() {
@@ -292,6 +299,12 @@ void handle(Engine::Message &m) {
     } else if (m.type == "locked") {
         configured = true;
         lockScreen(m.text);
+    } else if (m.type == "pin_required") {
+        unlocked = false;
+        requestId = m.id;
+        screen("PIN required in LNbits");
+        label("Enter your PIN in the paired LNbits client to unlock this signing request.");
+        button("Reject", [](lv_event_t *) { send("reject", "", "", requestId); });
     } else if (m.type == "network_setup") {
         DynamicJsonDocument details(512);
         deserializeJson(details, m.text);

@@ -36,4 +36,15 @@ inline bool fresh(int64_t created, int64_t expires, int64_t now) {
 inline bool signingSession(const std::string &requested, const std::string &current) {
     return !current.empty() && requested == current;
 }
+inline bool pinRequest(bool awaitingPin, const std::string &peer, const std::string &owner,
+                       const std::string &id, const std::string &pendingId, const std::string &hash,
+                       const std::string &pendingHash, const std::string &requestedSession,
+                       const std::string &session, int64_t now, int64_t expiry) {
+    return awaitingPin && !pendingId.empty() && peer == owner && id == pendingId &&
+           hash == pendingHash && signingSession(requestedSession, session) && now < expiry;
+}
+inline bool retryWifi(bool portalActive, bool configured, bool connected, uint32_t now,
+                      uint32_t lastAttempt) {
+    return !portalActive && configured && !connected && uint32_t(now - lastAttempt) >= 15000;
+}
 } // namespace BitcoinProtocol

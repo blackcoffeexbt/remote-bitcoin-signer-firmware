@@ -83,3 +83,167 @@ test('late responses are ignored and oversized PSBT is rejected before publicati
     c.close();await assertion
   }finally{c.close()}
 })
+
+test("authenticated progress stays pending and ignores duplicate or older statuses", async () => {
+  const c = setup(),
+    statuses = [];
+  c.onStatus = (status) => statuses.push(status);
+  try {
+    const promise = c.request("sign_psbt", {}, "a".repeat(64));
+    const original = body(c);
+    for (const [status, sequence] of [
+      ["PIN required", 2],
+      ["Ready to sign", 1],
+      ["PIN required", 2],
+      ["Decrypting wallet", 3],
+    ]) {
+      await c.receive(
+        response(c, { ...original, result: undefined, status, sequence }),
+      );
+      assert.equal(c.pending.size, 1);
+    }
+    await c.receive(
+      response(c, {
+        ...original,
+        status: "Signing",
+        sequence: 6,
+        psbt_hash: "b".repeat(64),
+      }),
+    );
+    assert.deepEqual(statuses, ["PIN required", "Decrypting wallet"]);
+    await c.receive(response(c, { ...original, result: { psbt: "signed" } }));
+    assert.deepEqual(await promise, { psbt: "signed" });
+  } finally {
+    c.close();
+  }
+});
+
+test("PIN submission binds to the signing request, PSBT hash and refreshed boot session", async () => {
+  const c = setup();
+  try {
+    c.account = { session: "b".repeat(32) };
+    await assert.rejects(c.submitPin("123456"), /No active PIN/);
+    const signing = c.request("sign_psbt", {}, "a".repeat(64));
+    const original = body(c);
+    await c.receive(
+      response(c, { ...original, status: "PIN required", sequence: 2 }),
+    );
+    await assert.rejects(c.submitPin("bad"), /6–32/);
+    const unlock = c.submitPin("123456");
+    const event = request(c);
+    const key = tools.nip44.v2.utils.getConversationKey(
+      deviceSecret,
+      c.clientKey,
+    );
+    const clear = JSON.parse(tools.nip44.v2.decrypt(event.content, key));
+    assert.equal(clear.method, "unlock");
+    assert.deepEqual(clear.params, {
+      pin: "123456",
+      request_id: original.id,
+      session: c.account.session,
+    });
+    assert.equal(clear.psbt_hash, original.psbt_hash);
+    assert.equal(c.pending.size, 2);
+    await assert.rejects(c.submitPin("123456"), /No active PIN/);
+    await c.receive(response(c, body(c, { result: {} })));
+    await unlock;
+    assert.equal(c.pending.size, 1);
+    await c.receive(response(c, { ...original, result: { psbt: "signed" } }));
+    await signing;
+  } finally {
+    c.close();
+  }
+});
+
+test("every sign refreshes the session automatically, including after reboot", async () => {
+  const c = setup();
+  try {
+    c.account = { session: "a".repeat(32) };
+    const signing = c.sign(btoa("psbt"));
+    // SHA-256 is asynchronous before the get_account request is published.
+    while (!c.pending.size)
+      await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(body(c).method, "get_account");
+    await c.receive(
+      response(
+        c,
+        body(c, {
+          result: {
+            session: "b".repeat(32),
+            descriptor: "descriptor",
+            path: "m/84'/1'/0'",
+          },
+        }),
+      ),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    const key = tools.nip44.v2.utils.getConversationKey(
+      deviceSecret,
+      c.clientKey,
+    );
+    const clear = JSON.parse(tools.nip44.v2.decrypt(request(c).content, key));
+    assert.equal(clear.method, "sign_psbt");
+    assert.equal(clear.params.session, "b".repeat(32));
+    await c.receive(response(c, body(c, { result: { psbt: "signed" } })));
+    assert.equal(await signing, "signed");
+  } finally {
+    c.close();
+  }
+});
+
+test("relay reconnection republishes identical in-flight requests after subscribing", async () => {
+  const c = setup();
+  try {
+    const promise = c.request("sign_psbt");
+    const expected = request(c);
+    const old = c.sockets[0];
+    old.close();
+    c.openRelay(old.url);
+    const replacement = c.sockets.at(-1);
+    replacement.open();
+    assert.equal(replacement.sent[0][0], "REQ");
+    assert.deepEqual(replacement.sent[1][1], expected);
+    await c.receive(response(c, body(c)));
+    await promise;
+  } finally {
+    c.close();
+  }
+  assert.equal(c.retries.size, 0);
+});
+
+test("a terminal signing response clears a lost PIN acknowledgement and its ciphertext", async () => {
+  const c = setup();
+  try {
+    c.account = { session: "a".repeat(32) };
+    const signing = c.request("sign_psbt", {}, "a".repeat(64));
+    const original = body(c);
+    await c.receive(
+      response(c, { ...original, status: "PIN required", sequence: 2 }),
+    );
+    const pin = c.submitPin("123456");
+    const entries = [...c.pending.values()];
+    assert.equal(entries[0].deadline, entries[1].deadline);
+    await c.receive(response(c, { ...original, result: { psbt: "signed" } }));
+    await Promise.all([signing, pin]);
+    assert.equal(c.pending.size, 0);
+  } finally {
+    c.close();
+  }
+});
+
+test('ephemeral requests are retried unchanged until a recovered device responds', async context => {
+  context.mock.timers.enable({apis: ['setInterval']})
+  const c = setup()
+  try {
+    const promise = c.request('get_account')
+    const expected = request(c)
+    const count = c.sockets[0].sent.length
+    context.mock.timers.tick(5000)
+    assert.equal(c.sockets[0].sent.length, count + 1)
+    assert.deepEqual(request(c), expected)
+    await c.receive(response(c, body(c)))
+    await promise
+    context.mock.timers.tick(10000)
+    assert.equal(c.sockets[0].sent.length, count + 1)
+  } finally { c.close() }
+})

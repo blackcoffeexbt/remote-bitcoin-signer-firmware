@@ -20,7 +20,7 @@ using namespace Wallet;
 constexpr int KIND = 24134; // Experimental Bitcoin signer protocol, not NIP-46.
 static QueueHandle_t commands, events;
 static Account account;
-static String secret, pubkey, session, pairToken;
+static String secret, pubkey, session, pairToken, savedAccount;
 static time_t pairExpiry = 0;
 static std::vector<String> urls;
 static std::vector<std::unique_ptr<WebSocketsClient>> sockets;
@@ -31,11 +31,13 @@ struct Pending {
     String id, peer, method, hash, label;
     Bytes psbt;
     time_t expiry = 0;
+    bool awaitingPin = false;
 };
 static Pending pending;
 static NetworkPortal portal;
 static bool connectingNetwork = false;
-static uint32_t networkStarted = 0;
+static uint32_t networkStarted = 0, lastWifiAttempt = 0;
+static bool wifiWasConnected = false, hasNetwork = false;
 static BitcoinProtocol::ReplayWindow seen;
 struct CachedReply {
     String key, wire;
@@ -82,7 +84,8 @@ static void publish(const String &wire) {
             s->sendTXT(wire.c_str(), wire.length());
 }
 static void reply(const String &peer, const String &id, const String &method, const String &hash,
-                  const String &result, const String &error, time_t expiry) {
+                  const String &result, const String &error, time_t expiry,
+                  const String &status = "", unsigned sequence = 0) {
     DynamicJsonDocument d(70000);
     d["protocol"] = "bitcoin-signer";
     d["version"] = 1;
@@ -90,7 +93,10 @@ static void reply(const String &peer, const String &id, const String &method, co
     d["method"] = method;
     d["network"] = "Testnet4";
     d["psbt_hash"] = hash;
-    if (error.length())
+    if (status.length()) {
+        d["status"] = status;
+        d["sequence"] = sequence;
+    } else if (error.length())
         d["error"] = error;
     else {
         DynamicJsonDocument r(66000);
@@ -103,6 +109,11 @@ static void reply(const String &peer, const String &id, const String &method, co
     require(wire.length(), "Response encryption failed");
     while (!replies.empty() && replies.front().expiry <= time(nullptr))
         replies.pop_front();
+    for (auto it = replies.begin(); it != replies.end();)
+        if (it->key == peer + ":" + id)
+            it = replies.erase(it);
+        else
+            ++it;
     if (replies.size() >= 8)
         replies.pop_front();
     replies.push_back({peer + ":" + id, wire, expiry});
@@ -110,10 +121,7 @@ static void reply(const String &peer, const String &id, const String &method, co
 }
 static String publicAccount() {
     DynamicJsonDocument d(2048);
-    d["descriptor"] = account.descriptor();
-    d["xpub"] = account.xpub();
-    d["fingerprint"] = account.fingerprint();
-    d["path"] = "m/84'/1'/0'";
+    require(!deserializeJson(d, savedAccount), "Public account unavailable; unlock locally once");
     d["session"] = session;
     return json(d);
 }
@@ -122,8 +130,10 @@ static void rejectPending(const char *reason) {
         return;
     auto p = pending;
     pending = Pending{};
+    if (p.method == "sign_psbt")
+        account.close();
     reply(p.peer, p.id, p.method, p.hash, "{}", reason, p.expiry);
-    post("home", reason);
+    post(p.method == "sign_psbt" ? "locked" : "home", reason);
 }
 static String outputAddress(const Bytes &b) {
     Script script(b.data(), b.size());
@@ -131,8 +141,27 @@ static String outputAddress(const Bytes &b) {
     require(address.length(), "Cannot display recipient address");
     return address;
 }
+static void progress(const char *text, unsigned sequence) {
+    reply(pending.peer, pending.id, pending.method, pending.hash, "{}", "", pending.expiry, text,
+          sequence);
+    post("progress", text);
+}
+static void reviewPending() {
+    require(time(nullptr) < pending.expiry, "Request expired");
+    progress("Validating transaction", 4);
+    auto review = account.validate(pending.psbt);
+    String text = "Client: " + pending.label + "\nTESTNET4\n";
+    for (auto &out : review.tx.outputs)
+        text += "\n" + String(out.change ? "CHANGE" : "RECIPIENT") + "\n" +
+                outputAddress(out.script) + "\n" + String((unsigned long long)out.amount) +
+                " sat\n";
+    text += "\nFEE: " + String((unsigned long long)review.fee) + " sat";
+    pending.awaitingPin = false;
+    progress("Ready to sign — approve on device", 5);
+    post("review", text, "", pending.id);
+}
 static void receive(const uint8_t *payload, size_t length) {
-    if (!account.ready() || length > 100000 || time(nullptr) < 1700000000)
+    if (!secret.length() || length > 100000 || time(nullptr) < 1700000000)
         return;
     DynamicJsonDocument d(190000);
     if (deserializeJson(d, payload, length, DeserializationOption::NestingLimit(12)))
@@ -176,8 +205,18 @@ static void receive(const uint8_t *payload, size_t length) {
     if (clear.isEmpty() || clear.length() > 46000)
         return;
     DynamicJsonDocument request(65000);
-    if (deserializeJson(request, clear, DeserializationOption::NestingLimit(5)))
+    auto parseError = deserializeJson(request, clear, DeserializationOption::NestingLimit(5));
+    wipe(clear);
+    if (parseError)
         return;
+    struct PinValue {
+        String value;
+        ~PinValue() {
+            wipe(value);
+        }
+    } pinValue{request["params"]["pin"] | ""};
+    if (auto storedPin = request["params"]["pin"].as<const char *>())
+        nostr::crypto::wipe(const_cast<char *>(storedPin), strlen(storedPin));
     String id = request["id"] | "", method = request["method"] | "",
            psbtHash = request["psbt_hash"] | "";
     if (request["protocol"] != "bitcoin-signer" || request["version"] != 1 ||
@@ -198,11 +237,46 @@ static void receive(const uint8_t *payload, size_t length) {
     if (replay == BitcoinProtocol::ReplayWindow::Full)
         return;
     try {
+        if (method == "unlock") {
+            require(clients.count(peer), "unauthorized");
+            require(BitcoinProtocol::pinRequest(
+                        pending.awaitingPin, peer.c_str(), pending.peer.c_str(),
+                        request["params"]["request_id"] | "", pending.id.c_str(), psbtHash.c_str(),
+                        pending.hash.c_str(), request["params"]["session"] | "", session.c_str(),
+                        now, pending.expiry),
+                    "No matching PIN request");
+            require((int32_t)(millis() - unlockAfter) >= 0, "Wait before retrying PIN");
+            String &pin = pinValue.value;
+            String phrase, transport;
+            try {
+                progress("Decrypting wallet", 3);
+                unlock(pin, phrase, transport);
+                require(transport == secret, "Transport identity mismatch");
+                account.open(phrase);
+                failures = 0;
+                wipe(pin);
+                wipe(phrase);
+                wipe(transport);
+                reviewPending();
+                reply(peer, id, method, psbtHash, "{}", "", expires);
+            } catch (...) {
+                wipe(pin);
+                wipe(phrase);
+                wipe(transport);
+                account.close();
+                failures = std::min(failures + 1, 10U);
+                unlockAfter = millis() + 1000 * (1U << failures);
+                rejectPending("Unlock failed or request expired; retry signing");
+                throw;
+            }
+            return;
+        }
         if (pending.id.length()) {
             reply(peer, id, method, psbtHash, "{}", "busy", expires);
             return;
         }
         if (method == "pair") {
+            require(account.ready(), "Unlock locally to pair a browser");
             require(pairToken.length() && now < pairExpiry &&
                         request["params"]["token"] == pairToken,
                     "Pairing code expired or incorrect");
@@ -226,24 +300,24 @@ static void receive(const uint8_t *payload, size_t length) {
         String b64 = request["params"]["psbt"] | "";
         auto bytes = decode(b64);
         require(hexString(psbtHash, 64) && hex(hash(bytes)) == psbtHash, "PSBT hash mismatch");
-        auto review = account.validate(bytes);
-        String text = "Client: " + clients[peer] + "\nTESTNET4\n";
-        for (size_t i = 0; i < review.tx.outputs.size(); i++) {
-            auto &out = review.tx.outputs[i];
-            text += "\n" + String(out.change ? "CHANGE" : "RECIPIENT") + "\n" +
-                    outputAddress(out.script) + "\n" + String((unsigned long long)out.amount) +
-                    " sat\n";
-        }
-        text += "\nFEE: " + String((unsigned long long)review.fee) + " sat";
-        pending = {id, peer, method, psbtHash, clients[peer], std::move(bytes), expires};
-        post("review", text, "", id);
+        require((int32_t)(millis() - unlockAfter) >= 0, "Wait before retrying PIN");
+        pending = {id, peer, method, psbtHash, clients[peer], std::move(bytes), expires, true};
+        account.close();
+        post("pin_required", "", "", id);
+        progress("Ready to sign", 1);
+        progress("PIN required", 2);
     } catch (const std::exception &ex) {
+        if (pending.id == id && pending.peer == peer) {
+            pending = Pending{};
+            account.close();
+            post("locked", ex.what());
+        }
         reply(peer, id, method, psbtHash, "{}", ex.what(), expires);
     }
 }
 static void connectRelays() {
     sockets.clear();
-    if (!account.ready())
+    if (!secret.length())
         return;
     for (const auto &url : urls) {
         int slash = url.indexOf('/', 6);
@@ -282,19 +356,33 @@ static void connectRelays() {
         sockets.push_back(std::move(socket));
     }
 }
-static void unlocked(const String &phrase) {
-    post("progress", "Preparing wallet keys and relay connections...");
-    account.open(phrase);
+static void startTransport() {
     uint8_t b[32];
     fromHex(secret, b, 32);
     PrivateKey sk(b);
     nostr::crypto::wipe(b, 32);
     String full = sk.publicKey().toString();
     pubkey = full.substring(2);
-    session = randomHex();
-    seen.clear();
-    replies.clear();
+    if (!session.length())
+        session = randomHex();
     connectRelays();
+}
+static void unlocked(const String &phrase) {
+    post("progress", "Preparing wallet keys and relay connections...");
+    account.open(phrase);
+    DynamicJsonDocument d(2048);
+    d["descriptor"] = account.descriptor();
+    d["xpub"] = account.xpub();
+    d["fingerprint"] = account.fingerprint();
+    d["path"] = "m/84'/1'/0'";
+    savedAccount = json(d);
+    Preferences p;
+    p.begin("btc-signer", false);
+    require(p.putString("public-account", savedAccount) == savedAccount.length() &&
+                p.putString("transport", secret) == secret.length(),
+            "Cannot save relay identity");
+    p.end();
+    startTransport();
     post("home", "Unlocked — Testnet4");
 }
 static void command(Message &m) {
@@ -317,17 +405,20 @@ static void command(Message &m) {
         }
         unlocked(m.text);
     } else if (m.type == "unlock") {
+        require(!pending.id.length(), "Enter the PIN in LNbits for this request");
         require((int32_t)(millis() - unlockAfter) >= 0, "Wait before retrying PIN");
-        String phrase;
+        String phrase, transport;
         try {
             post("progress", "Checking PIN and decrypting wallet... This takes about 20 seconds.");
-            unlock(m.text, phrase, secret);
+            unlock(m.text, phrase, transport);
+            secret = transport;
+            wipe(transport);
             unlocked(phrase);
             failures = 0;
             wipe(phrase);
         } catch (...) {
             wipe(phrase);
-            wipe(secret);
+            wipe(transport);
             account.close();
             failures = std::min(failures + 1, 10U);
             unlockAfter = millis() + 1000 * (1U << failures);
@@ -337,12 +428,9 @@ static void command(Message &m) {
         portal.stop();
         if (pending.id.length())
             rejectPending("Device locked");
-        sockets.clear();
         account.close();
-        wipe(secret);
         pairToken = "";
-        replies.clear();
-        post("locked", "Enter PIN");
+        post("locked", "Ready for signing requests from LNbits");
     } else if (m.type == "pair_code") {
         require(account.ready(), "Unlock first");
         require(urls.size() > 0, "Configure a relay first");
@@ -361,8 +449,8 @@ static void command(Message &m) {
     } else if (m.type == "approve") {
         require(pending.id.length() && m.id == pending.id, "Request no longer active");
         require(time(nullptr) < pending.expiry, "Request expired");
+        require(!pending.awaitingPin, "Enter PIN in LNbits first");
         auto p = pending;
-        pending = Pending{};
         try {
             if (p.method == "pair") {
                 post("progress", "Saving browser pairing...");
@@ -377,18 +465,27 @@ static void command(Message &m) {
                 post("progress", "Sending public account to paired browser...");
                 reply(p.peer, p.id, p.method, "", publicAccount(), "", p.expiry);
             } else {
-                post("progress", "Validating and signing transaction...");
+                progress("Signing", 6);
                 auto signedPsbt = account.sign(p.psbt);
+                account.close(); // Release and zero Bitcoin keys before publishing any result.
                 require(time(nullptr) < p.expiry, "Request expired while signing");
                 DynamicJsonDocument d(66000);
                 d["psbt"] = signedPsbt;
-                post("progress", "Encrypting and sending signed transaction...");
+                progress("Signing complete", 7);
                 reply(p.peer, p.id, p.method, p.hash, json(d), "", p.expiry);
             }
-            post("home", "Approved");
+            pending = Pending{};
+            if (p.method == "sign_psbt") {
+                account.close();
+                post("locked", "Signing complete");
+            } else
+                post("home", "Approved");
         } catch (const std::exception &ex) {
+            pending = Pending{};
+            if (p.method == "sign_psbt")
+                account.close();
             reply(p.peer, p.id, p.method, p.hash, "{}", ex.what(), p.expiry);
-            post("home", ex.what());
+            post(p.method == "sign_psbt" ? "locked" : "home", ex.what());
         }
     } else if (m.type == "reject") {
         if (m.id == pending.id)
@@ -424,6 +521,8 @@ static void command(Message &m) {
         p.end();
         portal.stop();
         urls = config.relays;
+        hasNetwork = true;
+        lastWifiAttempt = millis();
         WiFi.begin(config.ssid.c_str(), config.password.c_str());
         configTime(0, 0, "pool.ntp.org", "time.google.com");
         connectRelays();
@@ -447,20 +546,32 @@ static void run(void *) {
     Preferences p;
     p.begin("btc-signer", true);
     String net = p.getString("network", ""), saved = p.getString("clients", "{}");
+    secret = p.getString("transport", "");
+    savedAccount = p.getString("public-account", "");
     p.end();
+    if (hexString(secret, 64) && savedAccount.length())
+        startTransport();
+    else
+        wipe(secret);
+    WiFi.setAutoReconnect(true);
     DynamicJsonDocument d(2048);
     if (!deserializeJson(d, saved))
         for (auto kv : d.as<JsonObject>())
             clients[kv.key().c_str()] = kv.value().as<String>();
     if (!deserializeJson(d, net)) {
         String ssid = d["ssid"] | "", pass = d["password"] | "";
+        hasNetwork = ssid.length();
+        lastWifiAttempt = millis();
         WiFi.begin(ssid.c_str(), pass.c_str());
         for (auto u : d["relays"].as<JsonArray>())
             urls.push_back(u.as<String>());
         configTime(0, 0, "pool.ntp.org", "time.google.com");
     }
+    connectRelays();
     post(exists() ? "locked" : "welcome",
-         exists() ? "Enter PIN" : "Create or restore a Testnet4 wallet");
+         exists() ? (secret.length() ? "Ready for signing requests from LNbits"
+                                     : "Unlock locally once to enable remote PIN signing")
+                  : "Create or restore a Testnet4 wallet");
     for (;;) {
         Message *m = nullptr;
         if (xQueueReceive(commands, &m, 0) == pdTRUE) {
@@ -493,15 +604,29 @@ static void run(void *) {
                 post("home", "Network setup expired. Open Network settings to try again.");
             }
         }
+        if (!portal.active() && hasNetwork) {
+            const bool online = WiFi.status() == WL_CONNECTED;
+            if (online && !wifiWasConnected) {
+                connectRelays(); // Rebuild stale TCP/TLS connections after an outage.
+                post("status", "Wi-Fi connected. Connecting to relays...");
+            } else if (!online && wifiWasConnected) {
+                sockets.clear();
+                post("status", "Wi-Fi disconnected. Reconnecting...");
+            }
+            wifiWasConnected = online;
+            if (BitcoinProtocol::retryWifi(portal.active(), hasNetwork, online, millis(),
+                                           lastWifiAttempt)) {
+                lastWifiAttempt = millis();
+                WiFi.reconnect();
+            }
+        }
         if (connectingNetwork) {
             if (WiFi.status() == WL_CONNECTED) {
                 connectingNetwork = false;
-                post("home", "Wi-Fi connected. Relays connect after wallet unlock and time "
-                             "synchronization.");
+                post("status", "Wi-Fi connected. Relays connect after time synchronization.");
             } else if (uint32_t(millis() - networkStarted) > 30000) {
                 connectingNetwork = false;
-                post("home",
-                     "Could not connect to Wi-Fi. Open Network settings to check the password.");
+                post("status", "Wi-Fi unavailable. Retrying automatically.");
             }
         }
         if (pending.id.length() && time(nullptr) >= pending.expiry)
@@ -509,7 +634,8 @@ static void run(void *) {
                 rejectPending("Request expired");
             } catch (...) {
                 pending = Pending{};
-                post("home", "Request expired");
+                account.close();
+                post("locked", "Request expired");
             }
         if (pairToken.length() && time(nullptr) >= pairExpiry)
             pairToken = "";

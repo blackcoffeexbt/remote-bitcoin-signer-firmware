@@ -12,7 +12,15 @@ inline void firmwareSelfTest() {
     a.open(words12);
     require(a.fingerprint() == "73c5da0a", "Recovery fingerprint failed");
     a.close();
-    Serial.println("SELFTEST: 12-word recovery passed");
+    require(!a.ready(), "Wallet keys retained after close");
+    bool locked = false;
+    try {
+        a.validate({});
+    } catch (...) {
+        locked = true;
+    }
+    require(locked, "Closed wallet accepted validation");
+    Serial.println("SELFTEST: 12-word recovery and wallet cleanup passed");
     a.open(words24);
     a.close();
     Serial.println("SELFTEST: 24-word recovery passed; starting PIN derivation");

@@ -21,5 +21,18 @@ int main() {
     assert(signingSession("session-1", "session-1"));
     assert(!signingSession("session-1", "session-2"));
     assert(!signingSession("", ""));
+    assert(pinRequest(true, "peer", "peer", "id", "id", "hash", "hash", "s", "s", now, now + 1));
+    assert(!pinRequest(false, "peer", "peer", "id", "id", "hash", "hash", "s", "s", now, now + 1));
+    assert(!pinRequest(true, "other", "peer", "id", "id", "hash", "hash", "s", "s", now, now + 1));
+    assert(!pinRequest(true, "peer", "peer", "old", "id", "hash", "hash", "s", "s", now, now + 1));
+    assert(!pinRequest(true, "peer", "peer", "id", "id", "other", "hash", "s", "s", now, now + 1));
+    assert(!pinRequest(true, "peer", "peer", "id", "id", "hash", "hash", "old", "s", now, now + 1));
+    assert(!pinRequest(true, "peer", "peer", "id", "id", "hash", "hash", "s", "s", now, now));
+    assert(retryWifi(false, true, false, 15000, 0));
+    assert(!retryWifi(false, true, false, 14999, 0));
+    assert(!retryWifi(true, true, false, 15000, 0));
+    assert(!retryWifi(false, false, false, 15000, 0));
+    assert(!retryWifi(false, true, true, 15000, 0));
+    assert(retryWifi(false, true, false, 10000, UINT32_MAX - 5000));
     std::cout << "Replay, capacity, expiry, clock skew and restart checks passed\n";
 }

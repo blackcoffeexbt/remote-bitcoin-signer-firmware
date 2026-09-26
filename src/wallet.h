@@ -12,6 +12,7 @@
 #include <mbedtls/gcm.h>
 #include <mbedtls/pkcs5.h>
 #include <memory>
+#include <utility/trezor/bip39.h>
 namespace Wallet {
 using namespace BitcoinPolicy;
 inline void wipe(String &s) {
@@ -208,13 +209,37 @@ class Account {
         for (char c : phrase)
             if (c == ' ')
                 words++;
-        require((words == 12 || words == 24) && checkMnemonic(phrase),
+        require((words == 12 || words == 24) && mnemonic_check(phrase.c_str()),
                 "Invalid 12 or 24 word recovery phrase");
-        root.reset(new HDPrivateKey(phrase, String(""), &Testnet));
+        close();
+        // Derive without String copies of the phrase or retained seed buffers.
+        struct Material {
+            uint8_t seed[64] = {}, master[64] = {};
+            ~Material() {
+                nostr::crypto::wipe(seed, sizeof(seed));
+                nostr::crypto::wipe(master, sizeof(master));
+            }
+        } material;
+        mbedtls_md_context_t ctx;
+        mbedtls_md_init(&ctx);
+        const auto md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
+        int rc = mbedtls_md_setup(&ctx, md, 1);
+        if (!rc)
+            rc = mbedtls_pkcs5_pbkdf2_hmac(
+                &ctx, reinterpret_cast<const unsigned char *>(phrase.c_str()), phrase.length(),
+                reinterpret_cast<const unsigned char *>("mnemonic"), 8, 2048, 64, material.seed);
+        mbedtls_md_free(&ctx);
+        if (!rc)
+            rc = mbedtls_md_hmac(md, reinterpret_cast<const unsigned char *>("Bitcoin seed"), 12,
+                                 material.seed, 64, material.master);
+        require(!rc, "Wallet derivation failed");
+        root.reset(
+            new HDPrivateKey(material.master, material.master + 32, 0, nullptr, 0, &Testnet));
         require(bool(*root), "Invalid seed");
         account.reset(new HDPrivateKey(BitcoinSigning::accountKey(*root)));
     }
     void close() {
+        // uBitcoin destructors use memzero for private scalars and chain codes.
         account.reset();
         root.reset();
         nostr::crypto::clearCaches();

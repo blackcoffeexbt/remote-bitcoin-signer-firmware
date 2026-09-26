@@ -1,6 +1,6 @@
 # Experimental Bitcoin signer protocol v1
 
-This is a project-specific protocol, not NIP-46. Both directions use signed NIP-01 events of kind `24134`, with exactly one `p` tag containing the recipient's 64-character lowercase hex Nostr public key. The event content is NIP-44 v2 encrypted JSON. Do not send a Bitcoin seed or PIN in a message. Bitcoin and Nostr identities are separate.
+This is a project-specific protocol, not NIP-46. Both directions use signed NIP-01 events of kind `24134`, with exactly one `p` tag containing the recipient's 64-character lowercase hex Nostr public key. The event content is NIP-44 v2 encrypted JSON. Never send a Bitcoin seed. A PIN is accepted only in a NIP-44 encrypted `unlock` request from the paired browser owning the active signing request. Bitcoin and Nostr identities are separate.
 
 Validate the event hash, Schnorr signature, author, recipient, kind and timestamps before decrypting. Firmware only accepts unpaired senders while its local pairing window is open. NIP-44 authenticates ciphertext; it does not conceal routing metadata from relays or provide forward secrecy.
 
@@ -22,7 +22,7 @@ Validate the event hash, Schnorr signature, author, recipient, kind and timestam
 }
 ```
 
-Generate and sign a request once, then publish that same event to every relay. The browser uses a 150-second deadline. Firmware rejects expired requests, deadlines more than 180 seconds away, events older than 180 seconds and event timestamps more than 30 seconds ahead. A synchronized device clock is required.
+Generate and sign a request once, then publish that same event to every relay. Republish the identical event every five seconds until completion or expiry, as ephemeral relays cannot deliver requests sent while the device is offline. The browser uses a 150-second deadline. Firmware rejects expired requests, deadlines more than 180 seconds away, events older than 180 seconds and event timestamps more than 30 seconds ahead. A synchronized device clock is required.
 
 Methods:
 
@@ -30,11 +30,18 @@ Methods:
 | --- | --- | --- |
 | `pair` | `token`, printable `label` (1–40 characters) | Public account after local approval |
 | `get_account` | Empty object; paired clients only | `descriptor`, `xpub`, `fingerprint`, `path`, `session` |
-| `sign_psbt` | `session`, base64 `psbt`; paired clients only | `{ "psbt": "signed PSBT base64" }` after local approval |
+| `sign_psbt` | `session`, base64 `psbt`; paired clients only | Progress events, then `{ "psbt": "signed PSBT base64" }` after remote PIN unlock and local approval |
+| `unlock` | `session`, `request_id` of active signing request, `pin` (6–32 digits); same paired client and `psbt_hash` as signing request | `{}` after successful unlock and validation; errors terminate the signing request except unmatched requests or cooldown refusals |
 
-For pair/account requests, `psbt_hash` is an empty string. The device session changes on each unlock, including after reboot; reconnect before signing. It is a freshness challenge, not a secret.
+For pair/account requests, `psbt_hash` is an empty string. The device session changes on reboot and remains stable across wallet locks/unlocks. Clients retrieve it automatically before each signing request. Public account retrieval works while the wallet is locked. It is a freshness challenge, not a secret.
 
 The device's QR contains JSON with `protocol`, `version`, `pubkey`, `token` (16 random bytes as hex), and `relays`. It expires after three minutes. Local confirmation consumes the pairing token. Browser storage retains only its separate transport identity and connection information, scoped to the LNbits user/wallet.
+
+## Progress and remote PIN
+
+Signing first emits `Ready to sign` (sequence 1), then `PIN required` (2). The client keeps the original signing promise pending and shows PIN entry only after the authenticated status arrives. The `unlock` request has its own unique ID and binds `params.request_id`, `params.session`, sender and `psbt_hash` to the active signing request. Its deadline cannot extend the original signing deadline. Duplicate unlock deliveries never repeat decryption. Failed unlocks use the same exponential cooldown as local unlocks.
+
+Further statuses are `Decrypting wallet` (3), `Validating transaction` (4), `Ready to sign — approve on device` (5), `Signing` (6), and `Signing complete` (7). Status messages carry the original signing response binding fields plus `status` and integer `sequence`, without `result` or `error`. Clients ignore duplicate/older sequences and do not reset the deadline. Only the final `result` settles signing successfully. All statuses are signed and encrypted like other responses. The latest status replaces the previous cached reply for that request; the final result replaces the status.
 
 ## Response
 
@@ -42,7 +49,7 @@ Responses repeat `protocol`, `version`, `network`, `id`, `method`, and `psbt_has
 
 The device keeps a bounded 180-second replay window of 64 sender/request-ID pairs. It refuses additional requests rather than evict an unexpired ID. The eight most recent encrypted replies are cached until their request deadlines and republished on reconnect or duplicate delivery. A request outside that reply cache can time out but cannot be approved twice. Retry a failed payment only after reviewing current LNbits transaction state.
 
-Revocation rejects future requests and cancels a pending request from that client. Locking cancels pending approval, disconnects relays, and clears the unlocked Bitcoin account and Nostr secrets. Approval callbacks bind to the active request ID, so an old UI action cannot approve another transaction.
+Revocation rejects future requests and cancels a pending request from that client. Locking cancels pending approval and clears the unlocked Bitcoin account. Relay transport remains available using a separately persisted Nostr identity. Every signing request starts locked, and Bitcoin keys are cleared before publishing the signed result, or on rejection, failure or expiry. Recovery phrases and PINs are cleared after use; only public wallet metadata and the independent transport identity remain available. Existing vaults need one local unlock to provision this transport/public metadata without changing their identity or pairings. Approval callbacks bind to the active request ID, so an old UI action cannot approve another transaction.
 
 ## Resource and transaction limits
 
