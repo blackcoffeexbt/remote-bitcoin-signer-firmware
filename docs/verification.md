@@ -69,3 +69,10 @@ Native sanitizer checks cover rapid repeated taps, held-finger bounce, stale tai
 The client accepts authenticated automatic-approval progress without treating it as a final signature. The earlier automatic-connection regression test exercises Sign with device after a page reload with a saved pairing and no wallet metadata flag.
 
 This update is built and automatically tested only; physical touch responsiveness, settings migration, NVS power-loss behavior and device-backed automatic/manual signing need hardware verification. No firmware upload was performed.
+
+
+## Slate & Mint device theme
+
+The shared LVGL theme uses slate surfaces, mint primary actions, rounded settings rows, subdued secondary actions and distinct rejection/error styling. Numeric input uses 28 px text in 64 px fields; the 240 px numeric keyboard uses large keys and 28 px digits. Explanatory text collapses while entering numbers so the active field and next action stay reachable. PIN masking remains immediate, and signing/settings authorization behavior is unchanged.
+
+Representative home, settings and PIN screens were rendered using the installed LVGL library with the production styles and 32 KiB UI heap. The inspected screens retained at least 14 KiB of free UI heap. Normal firmware builds successfully. Previews are in `output/slate-mint/`. This update has not been flashed; visual and touch confirmation on the physical display remains pending.

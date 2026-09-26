@@ -1,3 +1,4 @@
+#include "device_ui.h"
 #include "display.h"
 #include "engine.h"
 #include "wallet.h"
@@ -14,39 +15,32 @@ String backupChoices[4];
 bool configured = false;
 void home(const String &text = "");
 void label(const String &text) {
-    auto obj = lv_label_create(page);
-    lv_obj_set_width(obj, 280);
-    lv_label_set_long_mode(obj, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(obj, text.c_str());
+    DeviceUI::label(page, text.c_str());
 }
 void screen(const String &title) {
     if (keyboard) {
         lv_obj_del(keyboard);
         keyboard = nullptr;
     }
-    lv_obj_clean(lv_scr_act());
-    page = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(page, 320, 480);
-    lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(page, 12, 0);
-    label(title);
+    page = DeviceUI::screen(title.c_str());
     statusLabel = nullptr;
     input1 = input2 = input3 = nullptr;
     Display::turnOnBacklight();
+    Display::resetBacklightTimeout();
 }
-void status(const String &text) {
-    if (!statusLabel) {
-        statusLabel = lv_label_create(page);
-        lv_obj_set_width(statusLabel, 280);
-    }
+void status(const String &text, bool error = false) {
+    if (!statusLabel)
+        statusLabel = DeviceUI::label(page, text.c_str());
+    DeviceUI::statusStyle(statusLabel, error);
     lv_label_set_text(statusLabel, text.c_str());
 }
-void button(const char *name, lv_event_cb_t callback) {
-    auto b = lv_btn_create(page);
-    lv_obj_set_width(b, 280);
-    auto l = lv_label_create(b);
-    lv_label_set_text(l, name);
-    lv_obj_center(l);
+void button(const char *name, lv_event_cb_t callback,
+            DeviceUI::Tone tone = DeviceUI::Tone::Primary) {
+    auto b = DeviceUI::button(page, name, tone);
+    lv_obj_add_event_cb(b, callback, LV_EVENT_CLICKED, nullptr);
+}
+void navigation(const char *name, const char *detail, const char *icon, lv_event_cb_t callback) {
+    auto b = DeviceUI::navigation(page, name, detail, icon);
     lv_obj_add_event_cb(b, callback, LV_EVENT_CLICKED, nullptr);
 }
 static const char *pinKeys[] = {
@@ -55,11 +49,13 @@ static const char *pinKeys[] = {
 static const lv_btnmatrix_ctrl_t pinControls[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 | LV_BTNMATRIX_CTRL_HIDDEN | LV_BTNMATRIX_CTRL_DISABLED};
 lv_obj_t *input(const char *hint, bool secret = false, bool multiline = false, bool pin = false) {
+    if (pin)
+        DeviceUI::label(page, hint, &lv_font_montserrat_14, DeviceUI::muted);
     auto t = lv_textarea_create(page);
-    lv_obj_set_width(t, 280);
     lv_textarea_set_one_line(t, !multiline);
     lv_textarea_set_password_mode(t, secret);
-    lv_textarea_set_placeholder_text(t, hint);
+    lv_textarea_set_placeholder_text(t, pin ? (secret ? "6-32 digits" : "0") : hint);
+    DeviceUI::inputStyle(t, pin, secret);
     lv_textarea_set_max_length(t, pin ? 32 : (multiline ? 600 : 100));
     if (pin)
         lv_textarea_set_accepted_chars(t, "0123456789");
@@ -69,8 +65,7 @@ lv_obj_t *input(const char *hint, bool secret = false, bool multiline = false, b
             auto target = lv_event_get_target(e);
             if (!keyboard) {
                 keyboard = lv_keyboard_create(lv_scr_act());
-                lv_obj_set_size(keyboard, 320, 200);
-                lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+
                 lv_obj_add_event_cb(
                     keyboard,
                     [](lv_event_t *event) {
@@ -90,19 +85,45 @@ lv_obj_t *input(const char *hint, bool secret = false, bool multiline = false, b
                             return;
                         lv_obj_del(keyboard);
                         keyboard = nullptr;
-                        lv_obj_set_height(page, 480);
+                        lv_obj_set_height(page, DeviceUI::height);
                     },
                     LV_EVENT_ALL, nullptr);
             }
-            lv_obj_set_height(page, 280);
             const bool numeric = lv_event_get_user_data(e) != nullptr;
+            DeviceUI::keyboardStyle(keyboard, numeric);
+            if (numeric) {
+                // Collapse introductory copy while typing; keep both PIN fields and actions.
+                for (uint32_t i = 0; i < lv_obj_get_child_cnt(page); i++) {
+                    if (!lv_obj_check_type(lv_obj_get_child(page, i), &lv_textarea_class))
+                        continue;
+                    for (uint32_t j = 0; j + 1 < i; j++)
+                        lv_obj_add_flag(lv_obj_get_child(page, j), LV_OBJ_FLAG_HIDDEN);
+                    break;
+                }
+            }
+            lv_obj_set_height(page, DeviceUI::height - (numeric ? DeviceUI::numericKeyboardHeight
+                                                                : DeviceUI::textKeyboardHeight));
             if (numeric)
                 lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_NUMBER, pinKeys, pinControls);
             lv_keyboard_set_mode(keyboard,
                                  numeric ? LV_KEYBOARD_MODE_NUMBER : LV_KEYBOARD_MODE_TEXT_LOWER);
             lv_btnmatrix_set_btn_ctrl_all(keyboard, LV_BTNMATRIX_CTRL_NO_REPEAT |
                                                         LV_BTNMATRIX_CTRL_CLICK_TRIG);
+            auto previous = lv_keyboard_get_textarea(keyboard);
+            if (previous && previous != target)
+                lv_obj_clear_state(previous, LV_STATE_FOCUSED);
             lv_keyboard_set_textarea(keyboard, target);
+            lv_obj_add_state(target, LV_STATE_FOCUSED);
+            lv_obj_update_layout(page);
+            // Keep the next field or action reachable above the larger keypad.
+            for (uint32_t i = lv_obj_get_index(target) + 1; i < lv_obj_get_child_cnt(page); i++) {
+                auto next = lv_obj_get_child(page, i);
+                if (lv_obj_check_type(next, &lv_textarea_class) ||
+                    lv_obj_check_type(next, &lv_btn_class)) {
+                    lv_obj_scroll_to_view(next, LV_ANIM_OFF);
+                    break;
+                }
+            }
             lv_obj_scroll_to_view(target, LV_ANIM_OFF);
         },
         LV_EVENT_CLICKED, pin ? reinterpret_cast<void *>(1) : nullptr);
@@ -157,7 +178,7 @@ void pinSetup() {
     button("Save wallet", [](lv_event_t *) {
         String pin = value(input1);
         if (pin != value(input2) || !Wallet::pinValid(pin)) {
-            status("Use matching PINs of 6-32 digits");
+            status("Use matching PINs of 6-32 digits", true);
             return;
         }
         if (!send("create", phrase, pin)) {
@@ -197,18 +218,14 @@ void verifySeed(unsigned word = 1) {
     for (unsigned i = 3; i > 0; i--)
         std::swap(backupChoices[i], backupChoices[esp_random() % (i + 1)]);
     for (unsigned i = 0; i < 4; i++) {
-        auto b = lv_btn_create(page);
-        lv_obj_set_size(b, 280, 44);
-        auto l = lv_label_create(b);
-        lv_label_set_text(l, backupChoices[i].c_str());
-        lv_obj_center(l);
+        auto b = DeviceUI::button(page, backupChoices[i].c_str(), DeviceUI::Tone::Secondary);
         lv_obj_add_event_cb(
             b,
             [](lv_event_t *e) {
                 const auto selection =
                     static_cast<unsigned>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
                 if (backupChoices[selection] != wordAt(backupWord)) {
-                    status("Incorrect word");
+                    status("Incorrect word", true);
                     return;
                 }
                 for (auto &choice : backupChoices)
@@ -225,11 +242,15 @@ void settingsMenu(const String &text = "") {
     screen("Settings");
     if (text.length())
         label(text);
-    button("Network settings", [](lv_event_t *) { send("network_setup"); });
-    button("Auto Signing Settings", [](lv_event_t *) { send("auto_settings"); });
+    navigation("Network", "Wi-Fi and Nostr relays", LV_SYMBOL_WIFI,
+               [](lv_event_t *) { send("network_setup"); });
+    navigation("Auto signing", "Transaction and daily limits", LV_SYMBOL_OK,
+               [](lv_event_t *) { send("auto_settings"); });
     if (Wallet::exists()) {
-        button("Pair a browser", [](lv_event_t *) { send("pair_code"); });
-        button("Paired browsers", [](lv_event_t *) { send("clients"); });
+        navigation("Pair a browser", "Connect your LNbits wallet", LV_SYMBOL_PLUS,
+                   [](lv_event_t *) { send("pair_code"); });
+        navigation("Paired browsers", "Manage trusted connections", LV_SYMBOL_LIST,
+                   [](lv_event_t *) { send("clients"); });
     }
     button(Wallet::exists() ? "Close Settings" : "Continue wallet setup",
            [](lv_event_t *) { send("settings_close"); });
@@ -257,7 +278,7 @@ void settingsPin(bool create, bool migration = false, const String &text = "") {
             Wallet::wipe(confirmation);
             if (!valid) {
                 Wallet::wipe(pin);
-                status("Use matching PINs of 6-32 digits");
+                status("Use matching PINs of 6-32 digits", true);
                 return;
             }
             send("settings_create", pin);
@@ -281,7 +302,7 @@ void settingsPin(bool create, bool migration = false, const String &text = "") {
         });
     }
     if (!create || Wallet::exists())
-        button("Cancel", [](lv_event_t *) { send("settings_close"); });
+        button("Cancel", [](lv_event_t *) { send("settings_close"); }, DeviceUI::Tone::Secondary);
 }
 void autoSettings(const String &text, const String &message) {
     DynamicJsonDocument d(512);
@@ -289,12 +310,10 @@ void autoSettings(const String &text, const String &message) {
     screen("Auto Signing Settings");
     label("Wallet PIN is always required. Below both limits, touchscreen approval is skipped. 0 "
           "disables it.");
-    label("Approve transactions under (sats)");
-    input1 = input("Amount in sats", false, false, true);
+    input1 = input("Approve transactions under (sats)", false, false, true);
     lv_textarea_set_max_length(input1, 16);
     lv_textarea_set_text(input1, String(d["under"].as<unsigned long long>()).c_str());
-    label("Total allowed per UTC day (sats)");
-    input2 = input("Daily allowance in sats", false, false, true);
+    input2 = input("Daily allowance (sats / UTC day)", false, false, true);
     lv_textarea_set_max_length(input2, 16);
     lv_textarea_set_text(input2, String(d["daily"].as<unsigned long long>()).c_str());
     label("Counts recipients plus fees, excluding change. Above either limit: review and approve "
@@ -302,15 +321,21 @@ void autoSettings(const String &text, const String &message) {
     if (message.length())
         label(message);
     button("Save limits", [](lv_event_t *) { send("auto_save", value(input1), value(input2)); });
-    button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
+    button(
+        "Back to Settings", [](lv_event_t *) { send("settings_open"); }, DeviceUI::Tone::Secondary);
 }
 void lockScreen(const String &text) {
-    screen("Bitcoin signer - locked");
+    screen("Ready to sign");
+    auto badge = DeviceUI::label(page, "WALLET LOCKED", &lv_font_montserrat_14, DeviceUI::mint);
+    DeviceUI::statusStyle(badge);
     if (text.length())
         label(text);
-    label("Connects to Wi-Fi and relays automatically. Start signing in LNbits to enter your "
-          "wallet PIN.");
-    button("Settings", [](lv_event_t *) { send("settings_open"); });
+    label("Start a signing request in LNbits. Enter your wallet PIN there when prompted.");
+    DeviceUI::label(page,
+                    WiFi.status() == WL_CONNECTED ? LV_SYMBOL_WIFI "  Wi-Fi connected"
+                                                  : LV_SYMBOL_WIFI "  Connecting to Wi-Fi...",
+                    &lv_font_montserrat_14, DeviceUI::muted);
+    button("Settings", [](lv_event_t *) { send("settings_open"); }, DeviceUI::Tone::Secondary);
 }
 void welcome() {
     screen("Testnet4 Bitcoin signer");
@@ -335,12 +360,15 @@ void welcome() {
             }
             pinSetup();
         });
-        button("Cancel", [](lv_event_t *) {
-            Wallet::wipe(phrase);
-            welcome();
-        });
+        button(
+            "Cancel",
+            [](lv_event_t *) {
+                Wallet::wipe(phrase);
+                welcome();
+            },
+            DeviceUI::Tone::Secondary);
     });
-    button("Settings", [](lv_event_t *) { send("settings_open"); });
+    button("Settings", [](lv_event_t *) { send("settings_open"); }, DeviceUI::Tone::Secondary);
 }
 void home(const String &text) {
     configured = Wallet::exists();
@@ -382,7 +410,9 @@ void handle(Engine::Message &m) {
         requestId = m.id;
         screen("PIN required in LNbits");
         label("Enter your PIN in the paired LNbits wallet to unlock this signing request.");
-        button("Reject", [](lv_event_t *) { send("reject", "", "", requestId); });
+        button(
+            "Reject", [](lv_event_t *) { send("reject", "", "", requestId); },
+            DeviceUI::Tone::Danger);
     } else if (m.type == "network_setup") {
         DynamicJsonDocument details(512);
         deserializeJson(details, m.text);
@@ -402,7 +432,7 @@ void handle(Engine::Message &m) {
         configured = Wallet::exists();
         home(m.text);
     } else if (m.type == "error" || m.type == "status")
-        status(m.text);
+        status(m.text, m.type == "error");
     else if (m.type == "seed") {
         phrase = m.text;
         screen("Write down your recovery phrase");
@@ -411,23 +441,30 @@ void handle(Engine::Message &m) {
             s += String(i) + ". " + wordAt(i) + "\n";
         label(s);
         button("I wrote it down", [](lv_event_t *) { verifySeed(); });
-        button("Cancel", [](lv_event_t *) {
-            Wallet::wipe(phrase);
-            welcome();
-        });
+        button(
+            "Cancel",
+            [](lv_event_t *) {
+                Wallet::wipe(phrase);
+                welcome();
+            },
+            DeviceUI::Tone::Secondary);
     } else if (m.type == "code") {
         screen("Pair browser - valid 3 minutes");
         label("Scan this in LNbits. Confirm the browser name and key on this device.");
         auto qr = lv_qrcode_create(page, 280, lv_color_black(), lv_color_white());
         lv_qrcode_update(qr, m.text.c_str(), m.text.length());
         label(m.text);
-        button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
+        button(
+            "Back to Settings", [](lv_event_t *) { send("settings_open"); },
+            DeviceUI::Tone::Secondary);
     } else if (m.type == "pair" || m.type == "review") {
         requestId = m.id;
         screen(m.type == "pair" ? "Authorize browser?" : "Review transaction");
         label(m.text);
         button("Approve", [](lv_event_t *) { send("approve", "", "", requestId); });
-        button("Reject", [](lv_event_t *) { send("reject", "", "", requestId); });
+        button(
+            "Reject", [](lv_event_t *) { send("reject", "", "", requestId); },
+            DeviceUI::Tone::Danger);
     } else if (m.type == "clients") {
         screen("Paired browsers");
         if (!m.text.length())
@@ -442,11 +479,9 @@ void handle(Engine::Message &m) {
             if (line.length() < 65)
                 continue;
             auto key = new String(line.substring(0, 64));
-            auto b = lv_btn_create(page);
-            lv_obj_set_width(b, 280);
-            auto l = lv_label_create(b);
-            lv_label_set_text(
-                l, ("Revoke " + line.substring(65) + "\n" + key->substring(0, 12)).c_str());
+            auto b = DeviceUI::button(
+                page, ("Revoke " + line.substring(65) + "\n" + key->substring(0, 12)).c_str(),
+                DeviceUI::Tone::Danger);
             lv_obj_add_event_cb(
                 b,
                 [](lv_event_t *e) {
@@ -460,7 +495,9 @@ void handle(Engine::Message &m) {
                 },
                 LV_EVENT_ALL, key);
         }
-        button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
+        button(
+            "Back to Settings", [](lv_event_t *) { send("settings_open"); },
+            DeviceUI::Tone::Secondary);
     }
 }
 } // namespace
@@ -470,6 +507,7 @@ void setup() {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     Display::init();
+    DeviceUI::init();
     screen("Starting Bitcoin signer...");
     if (!Engine::start())
         status("Cannot start signing worker. Restart device.");

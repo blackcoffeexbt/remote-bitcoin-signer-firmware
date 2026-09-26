@@ -2,6 +2,15 @@
 
 A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate action in LNbits.
 
+## Mobile app
+
+The React Native / Expo project in [`mobile/`](mobile/README.md) starts with a
+Testnet4 approval-flow simulation for Android and iOS. It does not yet hold keys
+or sign transactions. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
+documents user interactions, Nostr event structures, security boundaries and
+phases toward the first live signing MVP. Local Android Studio/Xcode and
+physical-device testing instructions are in the [mobile guide](mobile/README.md).
+
 ## Build and install
 
 ```sh
