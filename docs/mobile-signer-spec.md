@@ -13,12 +13,13 @@ has only its own independent Nostr transport identity and public account data.
 It sends the wallet PIN to the ESP32 only in the existing encrypted, request-bound
 `unlock` message. No Bitcoin wallet creation, restoration or local signing exists.
 
-The first functional client MVP imports an unsigned Testnet4 PSBT prepared by
-LNbits, reviews it, requests an ESP32 signature, collects the requested wallet
-PIN, follows authenticated progress, verifies the returned signatures and
-exports the signed PSBT. LNbits remains responsible for transaction preparation,
-finalization and an explicit broadcast. This phase does not replicate LNbits'
-balances, UTXO discovery, coin selection or transaction builder inside the phone.
+The phone now implements the complete payment workflow: Electrs-backed wallet
+sync and history, fresh receive addresses, coin control, mempool.space Testnet4
+fee estimates, local PSBT construction, remote ESP32 signing, local signature
+verification/finalization and separately confirmed in-app broadcasting. LNbits
+is not a runtime dependency. PSBT import/export remains available as an optional
+interoperability tool. The v0.2 remote-client checkpoint is commit `b62a140`;
+the in-app wallet is v0.3.
 
 ## Current system and trust boundaries
 
@@ -27,6 +28,9 @@ balances, UTXO discovery, coin selection or transaction builder inside the phone
 | ESP32 signer | Bitcoin seed in PIN-encrypted vault; independent Nostr secret; public account; paired browser keys; approval policy and daily reservations |
 | LNbits browser | Separate Nostr secret and connection data scoped to user/wallet; pending PSBT and transient wallet PIN; authenticates signer responses |
 | LNbits server | Public wallet, chain/explorer access, UTXOs, PSBT construction, signature verification/finalization and explicit broadcast; does not receive the remote wallet PIN |
+| Mobile wallet | Independent secure Nostr identity; public account/address cursors; verified UTXOs; local transaction construction/finalization; signed-payment recovery; explicit broadcast |
+| Configured Electrs | Electrum 1.4 TCP/TLS endpoint for history, UTXOs, full previous transactions and broadcast; sees wallet script hashes and transaction bytes |
+| mempool.space | Testnet4 fee-rate recommendations only; receives no wallet/account data |
 | Nostr relays | Carry signed encrypted events; see author, recipient, time, size and traffic patterns; not trusted for authorization or delivery |
 
 Bitcoin and Nostr keys are independent. This protocol is project-specific v1,
@@ -43,7 +47,7 @@ contains `lnbits/lnbits/onchain/static/js/nostr-signer-client.js`,
 under its onchain directory. It is ignored by this repository, so mobile code
 must not depend on that checkout being installed. See also [protocol.md](protocol.md).
 
-## Current user journey
+## Existing ESP32 / LNbits reference journey
 
 1. **Provision:** create a 6–32 digit settings PIN. Continue wallet setup;
    generate 12 words and verify each word from four choices, or restore a valid
@@ -204,7 +208,7 @@ human-readable, not stable machine codes: examples include `busy`, `unauthorized
 `Device restarted; reconnect first`, `PSBT hash mismatch`, and
 `Device settings open; close Settings first`. Malformed/unauthenticated traffic
 is ignored. Transport timeout can be ambiguous: a signature may have been made.
-Check LNbits transaction state before creating a new request.
+Check device and transaction state before creating a new request.
 
 ### Bounds, concurrency and replay
 
@@ -253,19 +257,20 @@ Every sign fetches the device's current session. The previously paired xpub is
 pinned; a changed account requires deliberate re-pairing. Closing the phone's
 client only stops local waiting: v1 has **no remote cancel/lock/approve method**.
 The UI must never imply otherwise. An ESP32 request may still complete after
-the phone disconnects; check device/LNbits state before starting a new request.
+the phone disconnects; check device and chain state before starting a new request.
 
 `mobile/src/storage.ts` stores the independent Nostr private key using Expo
 SecureStore (iOS Keychain / Android Keystore-backed storage) with unlocked,
 this-device-only iOS accessibility. Connection information and the pinned xpub
-are saved separately. Pairing tokens, PINs and PSBTs are not persisted there.
+are saved separately. Pairing tokens, PINs and PSBTs are not persisted in connection storage.
+The wallet separately preserves verified signed payments for recovery, below.
 The candidate connection is saved before requesting pairing, so a local storage
 interruption after device approval can be recovered with Reconnect. Forgetting
 local state rotates the phone identity but does not revoke the old identity on
 the ESP32; the user must revoke it in device Settings → Paired browsers.
 
 `mobile/src/bitcoin.ts` validates public account structure and Testnet BIP84 xpub,
-derives a labelled index-0 receive address, parses bounded PSBT v0, verifies full
+derives public BIP84 addresses, parses bounded PSBT v0, verifies full
 previous transactions and account derivations, computes fee/debit and recognizes
 owned outputs. The ESP32 remains the authoritative transaction validator. On
 return, the client compares the entire unsigned transaction, requires one
@@ -273,16 +278,115 @@ SIGHASH_ALL signature from the expected account key on every input, verifies
 ECDSA against the **original** UTXOs and returns the original maps plus only
 those verified signatures. Returned metadata cannot change the reviewed PSBT.
 
-`App.tsx` implements pairing QR/paste, client key comparison, reconnect, public
-account display/share, unsigned PSBT paste/file import, recipient/change/fee
-review, Request signature, authenticated PIN entry and progress, and signed
-PSBT copy/file sharing. Approval/rejection and device settings stay on ESP32.
-The index-0 receive address is a reference, not a fresh-address allocator.
+`App.tsx`, `WalletPanel.tsx` and `BroadcastPanel.tsx` provide pairing, server
+preferences, account retrieval, wallet sync, receive/send, coin control, fees,
+transaction review, authenticated PIN handling, recovery and explicit broadcast.
+Approval/rejection and device settings stay on ESP32.
+
+### In-app chain backend and wallet construction
+
+The user saves an Electrum-protocol endpoint, `ssl://host:port` or
+`tcp://host:port`. This is a direct Electrs connection, not an Esplora HTTP URL.
+TLS requires a system-trusted certificate and matching hostname; TCP is for a
+trusted local network and exposes queries. `react-native-tcp-socket` 6.4.3 has a
+pinned postinstall Android patch for hostname verification and SNI. No certificate
+bypass is exposed. iOS uses native peer-name/trust verification. Physical TLS
+negative tests remain an acceptance gate.
+
+Each new connection negotiates Electrum 1.4 and retrieves `blockchain.block.header`
+at height 0. The phone double-SHA256 hashes the 80-byte header and requires
+`00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043`
+before wallet requests or broadcast. Testnet4, Testnet3 and Signet share address
+formats, so address validation alone is insufficient. This check catches wrong
+network configuration; it is not chain/SPV validation. Electrs remains trusted
+for completeness, unspent status and confirmations.
+
+`electrum.ts` frames JSON-RPC 2.0 as newline-delimited JSON, matches monotonically
+increasing request IDs and rejects malformed/oversized replies (2.1 MB maximum).
+Connection and request deadlines are 15 seconds; at most 16 RPC calls can be
+pending. Disconnection rejects all pending work. No request, especially a
+broadcast, is automatically retried.
+
+`wallet.ts` derives account branches 0 and 1, computes Electrum script hashes
+(SHA256 of scriptPubKey, reversed), and queries `blockchain.scripthash.get_history`
+and `listunspent`. Discovery continues through 20 consecutive unused addresses
+past both observed usage and locally issued indices. It stops with an error,
+not a partial spendable balance, if 1,000 addresses per branch, 1,000 coins or
+2,000 unique history entries would be exceeded. History displays its latest
+50 entries with server-reported confirmations. Full previous transaction data
+from `blockchain.transaction.get` is checked against txid, vout, value and owned
+script before a coin enters the wallet snapshot. Immature coinbase is displayed
+but never selected; unconfirmed spend requires explicit opt-in.
+
+Receive and change cursors are monotonic and scoped to the xpub in SecureStore.
+Save before displaying a fresh receive address or exposing a prepared change
+address. At most 20 unused addresses may be issued beyond the last observed
+usage. Forgetting a device pairing retains these cursors. App deletion/storage
+loss and another wallet issuing beyond the gap can still require external
+recovery; the scanner does not claim unbounded wallet discovery.
+
+Automatic selection chooses largest eligible coins first, up to 32. Manual coin
+control spends exactly the selected outpoints and rejects stale/missing/duplicate
+selections. Send-max deducts the fee from their sum. Amounts use bigint satoshis;
+fee rates use integer thousandths of sat/vB. Fee sizing uses conservative native
+SegWit witness lengths, actual recipient script sizes and change. Change below
+294 sats is omitted and included in the displayed fee; recipient dust checks
+also reflect script type. The final signed transaction shows actual vsize and
+fee rate. Construction includes full `nonWitnessUtxo`, matching `witnessUtxo`,
+BIP84 derivations and SIGHASH_ALL, then runs the existing PSBT validator. Firmware
+v1 still requires version 2, locktime 0, final sequences (no RBF), <=32 inputs/
+outputs, 32 KiB unsigned PSBT and supported scripts. Imported PSBT broadcast
+also uses the 1,000-address derivation bound.
+
+Selected coins are rechecked against Electrs before construction, and every
+input is rechecked before broadcast. A five-minute-old wallet snapshot must be
+resynced before construction. These checks reduce stale-input errors but cannot
+remove the race with another spender; server rejection/uncertainty is surfaced.
+
+### Fee recommendations
+
+`fees.ts` calls only
+`https://mempool.space/testnet4/api/v1/fees/recommended`, with a 10-second timeout.
+It validates numeric, positive, ordered `fastestFee`, `halfHourFee`, `hourFee`,
+`economyFee`, and `minimumFee` fields and records retrieval time. The UI offers
+those target estimates plus an explicit manual sat/vB field (0.001–10,000).
+No wallet information is sent to mempool.space. Fee lookup failure is visible,
+not silently replaced with mainnet or old data. Selected estimates older than
+five minutes must be refreshed or deliberately replaced by a manual rate.
+Targets are estimates, not confirmation guarantees.
+
+### Finalization, broadcast and recovery
+
+Only signature-verified original PSBT maps are finalized locally. Display the
+locally computed txid, actual vsize, fee, debit and recipients before a separate
+**Broadcast transaction** confirmation. The phone first looks up that exact txid,
+checks unspent inputs if unknown, then calls `blockchain.transaction.broadcast`
+with the verified raw transaction. A successful reply must equal the local txid.
+Only a user action can start this submission; reconnect, signing success and
+status checks never broadcast automatically.
+
+`wallet-storage.ts` preserves the original and verified signed PSBT, timestamp,
+and state (`ready`, `unknown`, `submitted`) in an account-scoped two-slot app
+document journal, with its active-slot pointer in SecureStore. Write and verify
+the inactive slot before switching the pointer, retaining the prior complete
+record if a write fails. An interrupted first save blocks a replacement instead
+of appearing empty. This is public transaction data, not Bitcoin private material. Revalidate
+transaction identity/signatures when loading. Before broadcasting, save and
+read back an `unknown` recovery state; after a matching reply, save `submitted`.
+A write failure prevents starting the broadcast. Transport failure, lost reply,
+backgrounding or restart must not imply that the transaction was not sent.
+Restore after reconnecting to the same account, check the exact txid, and retry
+only those same bytes after explicit action. Acceptance is not confirmation;
+wallet sync supplies history/confirmation status. New payment preparation is
+disabled while a signed payment is retained, until the user explicitly clears
+it after reviewing transaction state. A malformed recovery record blocks new
+payments until deliberately cleared; the app does not silently discard it.
+No LNbits API, finalizer, explorer or broadcaster is needed in this flow.
 
 On inactive/background, close sockets, stop request retries, invalidate stale UI
 callbacks, obscure content, and clear PIN/pairing text. Do not resume pending
 approval automatically. Public review/output can remain in memory so file
-sharing is usable. File exports are temporary and removed when sharing ends.
+sharing is usable, and verified signed-payment recovery remains on disk. File exports are temporary and removed when sharing ends.
 CSPRNG bytes come from Expo Crypto before Nostr dependencies initialize. Never
 log PINs/keys or use Math.random. JavaScript cannot guarantee erasure of every
 string copy; make no native-memory zeroization claim for this client.
@@ -292,7 +396,7 @@ string copy; make no native-memory zeroization claim for this client.
 | Phase | Deliverable | Exit gate |
 | --- | --- | --- |
 | **1 — remote client MVP (implemented)** | Real QR/paste pairing, secure transport identity, public account, PSBT import/review, encrypted sign/unlock, progress, verified signed PSBT export | Automated real-crypto protocol/Bitcoin tests, typecheck/lint and Android/iOS bundles; physical ESP32 + Android/iPhone round trip still required |
-| **2 — wallet convenience** | Optional LNbits API integration or explicit Testnet4 chain backend for balances, fresh receive addresses, UTXO selection, payment/fee construction and explicit broadcast | End-to-end payment on both phones with double-spend/fee/error handling and no automatic broadcast |
+| **2 — independent mobile wallet (implemented)** | Direct Electrs sync/history, fresh addresses, coin control, mempool.space fees, local PSBT construction/finalization, explicit broadcast and restart recovery | Automated wallet/backend tests and native build; physical end-to-end payment on both phones with conflict/fee/error handling remains required |
 | **3 — reliability and release** | More relay fault testing, accessibility, optional authenticated notifications, app signing/release review | Device background/expiry/reconnect tests, storage migrations and security review |
 
 Out of scope: Bitcoin custody on the phone; remotely changing ESP32 settings,
@@ -306,13 +410,15 @@ broadcast; always-on background signing; Taproot/multisig inputs.
 2. Verify the descriptor/xpub/fingerprint against the device/LNbits account.
    Restart the phone and reconnect; the client key and pairing should survive.
    Reboot ESP32 and sign again to test automatic fresh-session retrieval.
-3. Build a disposable Testnet4 payment in LNbits including full previous
-   transactions. Export its unsigned PSBT and import/paste into the phone.
+3. Configure Testnet4 Electrs in the app. Receive disposable test coins, sync
+   both branches, choose coins/recipient/amount and a mempool.space or manual
+   fee rate. Prepare the PSBT in-app. Also exercise optional PSBT file import.
 4. Review full recipients, amounts, owned outputs, fee and debit. Request device
    signing; PIN entry must appear only after the authenticated PIN-required status.
 5. Enter the **wallet** PIN on the phone. Review and approve/reject on ESP32.
-   Verify the returned PSBT on the phone, export to LNbits, and broadcast there
-   explicitly after its own verification/finalization.
+   Verify and finalize on the phone, then explicitly confirm in-app broadcast.
+   Compare the txid on Electrs and sync confirmations. Drop the broadcast reply,
+   restart/reconnect, restore the signed record and check/retry the same txid.
 6. Exercise wrong PIN/cooldown, rejection, revoked pairing, offline relays,
    deadline expiry, backgrounding, restart, changed device account, malformed
    PSBT and duplicate relay deliveries. Stopping the phone is not remote cancel.
@@ -329,3 +435,7 @@ gates. See [mobile/README.md](../mobile/README.md) for build and test instructio
 - [React Native security](https://reactnative.dev/docs/security)
 - [nostr-tools](https://github.com/nbd-wtf/nostr-tools)
 - [bitcoinjs-lib](https://github.com/bitcoinjs/bitcoinjs-lib)
+- [Electrum protocol methods](https://electrum-protocol.readthedocs.io/en/latest/protocol-methods.html)
+- [Bitcoin Core Testnet4 chain parameters](https://github.com/bitcoin/bitcoin/blob/master/src/kernel/chainparams.cpp)
+- [mempool.space API](https://mempool.space/docs/api/rest)
+- [React Native TCP/TLS module](https://github.com/Rapsssito/react-native-tcp-socket)

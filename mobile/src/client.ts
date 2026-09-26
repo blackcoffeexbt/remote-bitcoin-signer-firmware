@@ -155,7 +155,7 @@ export class SignerClient {
           try { socket.send(wire); } catch { socket.close(); }
         }
       };
-      const timer = setTimeout(() => this.settle(id, new Error('Request timed out. Check the device and LNbits before retrying; it may already have signed.')), Math.max(0, expires - this.now()));
+      const timer = setTimeout(() => this.settle(id, new Error('Request timed out. Check the device and transaction state before retrying; it may already have signed.')), Math.max(0, expires - this.now()));
       const retry = setInterval(publish, 5000);
       this.pending.set(id, { method, hash, expires, wire, parent, sequence: 0, resolve, reject, timer, retry });
       this.emit({ deadline: expires }); publish();
@@ -199,7 +199,7 @@ export class SignerClient {
       if (typeof result.psbt !== 'string') throw new Error('Missing signed PSBT');
       this.emit({ status: 'Verifying Bitcoin signatures' });
       const verified = verifySignedPsbt(psbt, result.psbt, account);
-      this.emit({ status: 'Signed PSBT verified. Return it to LNbits for broadcast.' });
+      this.emit({ status: 'Signed PSBT verified. Review the final transaction and confirm broadcast when ready.' });
       return verified;
     });
   }

@@ -4,44 +4,64 @@ This app controls the existing ESP32 Bitcoin signer over Nostr, in the same
 protocol role as the LNbits browser. **Bitcoin keys and approval stay on the
 ESP32.** The old phone-as-signer simulation was incorrect and has been removed.
 
-## Working client flow
+## Working wallet flow
 
-1. On ESP32 open **Settings → Pair a browser**. In the phone app scan its QR or
-   paste the pairing JSON, name this client, and choose **Request pairing**.
-   Compare the phone's full Nostr public key on ESP32 and approve there.
-2. The app retrieves the public account. Its independent Nostr transport identity
-   and connection are saved in OS-backed secure storage. Reopen the app and use
-   **Reconnect / refresh account** to retrieve the device's current account.
-3. Prepare a Testnet4 payment in LNbits with full previous transactions included
-   (`include_non_witness_utxo=true`). Export the unsigned PSBT. Paste its base64
-   or use **Import PSBT file** (binary `.psbt` or base64 text).
-4. **Review transaction** displays full recipients, verified own outputs,
-   amounts, fee and wallet debit. **Request signature from ESP32** refreshes
-   the boot session and sends the encrypted signing request.
-5. Enter the ESP32 **wallet PIN** only when the authenticated device status
-   requests it. The PIN is encrypted to the device with the original request
-   ID/hash/session binding. It is not sent to LNbits or stored on the phone.
-6. Review/approve on ESP32, unless its existing auto-approval policy applies.
-   The phone follows authenticated progress and verifies the returned unsigned
-   transaction and every Bitcoin signature against the original PSBT data.
-7. **Copy signed PSBT** or **Share signed PSBT file**, return it to LNbits, and
-   explicitly finalize/broadcast there. The phone does not broadcast.
+1. Open ESP32 **Settings → Pair a browser**. Scan/paste its QR in the app,
+   compare the phone's full Nostr public key on the ESP32 and approve there.
+   The independent phone transport key is held in OS-backed secure storage.
+2. In **App settings**, save your Testnet4 Electrs Electrum endpoint:
+   `ssl://host:50002` for TLS with a system-trusted certificate, or
+   `tcp://192.168.1.10:50001` for a trusted local network. Plain TCP exposes
+   queries to the network. This field is not an Esplora HTTP API URL. Standard
+   Electrs can sit behind a TLS proxy; accept-any-certificate mode is not offered.
+3. **Reconnect / refresh account**, then **Sync wallet**. The phone verifies
+   Testnet4's genesis, scans receive/change branches, and displays balances,
+   coins and transaction history. Electrs sees script hashes and supplies chain
+   status; this is a server-trusting wallet, not SPV or a full node.
+4. Choose **New receive address** and copy it to receive Testnet4 coins. Issued
+   receive/change indices are persisted per xpub before exposure. Discovery uses
+   a 20-address gap and a 1,000-address limit per branch; incomplete scans fail.
+5. Enter a recipient and amount in sats, or choose **Send maximum**. Use
+   automatic largest-first selection or **Coin control** to select exact outputs.
+   Unconfirmed inputs require an explicit opt-in; immature coinbase is excluded.
+6. **Refresh fee estimates** uses only mempool.space's Testnet4 recommended-fee
+   endpoint. Choose a target or enter sat/vB manually (up to three decimals).
+   Stale estimates require refresh after five minutes. API failures are shown;
+   no mainnet fallback is used. Confirmation targets are approximate.
+7. **Prepare and review payment** checks the selected coins again and builds
+   the PSBT locally with full previous transactions and BIP84 derivations. Review
+   recipients, verified change, wallet debit and the total fee. Dust remainder
+   is explicitly included in the displayed fee. No LNbits service is required.
+8. **Request signature from ESP32**. Enter the **wallet PIN** only after its
+   authenticated request; approve on the device unless its policy permits auto
+   approval. All signing, private keys and approval policy stay on the ESP32.
+9. The phone verifies every signature against the original transaction/UTXOs,
+   finalizes it locally, and shows its txid, actual vsize and fee rate.
+   **Broadcast transaction** opens a separate confirmation before submitting
+   to your Electrs server. Acceptance is not confirmation; sync history to track it.
+10. A verified signed-payment recovery record remains on disk until explicitly
+    cleared. After restarting, reconnect to the same account to restore it.
+    On an uncertain result, **Check transaction status** first; retrying broadcasts
+    the identical transaction, never automatically creates a replacement.
 
-The current MVP imports prepared PSBTs. It does not yet reproduce LNbits'
-balances, coin selection, transaction builder or broadcast UI. The displayed
-index-0 receive address is a reference, not a fresh-address allocator.
+PSBT file/base64 import and signed PSBT export remain optional tools. No payment
+construction, finalization or broadcasting is outsourced to LNbits. v1 firmware
+still restricts transactions to Testnet4, native SegWit BIP84 inputs, final
+sequences (no RBF), and at most 32 inputs/outputs and a 32 KiB unsigned PSBT.
+Full previous transactions can hit that size limit even with fewer inputs.
 
 **Stop waiting / disconnect is local only.** Firmware v1 has no remote cancel,
 lock, approve, policy-edit or revoke method. A pending request may still complete
-on the ESP32; inspect device/LNbits state before retrying. Backgrounding clears
-PIN/pairing text, closes sockets and stops waiting. Forgetting the phone's local
-connection does not revoke its old key on ESP32: use Settings → Paired browsers.
+on the ESP32. Backgrounding closes connections and clears PIN/pairing text.
+Forgetting the phone connection does not revoke its key on ESP32; use Settings
+→ Paired browsers. It also retains account-scoped address cursors and payment
+recovery records. A corrupted recovery record blocks new payments until reviewed
+and explicitly cleared. PINs, tokens and Bitcoin private keys are never saved.
 
 ## Build and run
 
 Node 22.13+, npm, Android Studio / SDK 36 / Java 21, and Xcode 26.4+ for iOS.
-The project uses Expo SDK 57 and development builds. Native dependencies changed
-for the real client, so reinstalling the earlier demo APK is not sufficient.
+The project uses Expo SDK 57 and development builds. Native TCP/TLS support requires a new native build; an older APK cannot run it.
 
 ```sh
 cd mobile
@@ -78,16 +98,19 @@ previous build. All other release checks remain enabled; recheck on upgrades.
 
 ## Architecture and checks
 
-- `src/client.ts`: signed NIP-01 kind 24134 + NIP-44 v2 client, retry/reconnect,
-  binding/expiry/progress validation, account pinning and PIN submission.
-- `src/bitcoin.ts`: Testnet BIP84 ownership/UTXO review and signed PSBT validation.
-  Returned metadata is discarded; only verified signatures join original maps.
-- `src/storage.ts`: separate secure transport key and connection persistence.
-- `src/random.ts`: native cryptographic randomness before Nostr initialization.
-- `App.tsx`: real pairing, QR/file import, progress/PIN and verified PSBT export.
-- `tests/`: real Nostr and Bitcoin cryptography against fake relay sockets and
-  disposable deterministic Bitcoin fixtures. No firmware or network mock is
-  reachable from the app UI.
+- `src/client.ts`: authenticated Nostr/NIP-44 device requests and PIN binding.
+- `src/electrum.ts` / `electrum-native.ts`: bounded Electrum 1.4 JSON-RPC,
+  connection/request timeouts and Testnet4 genesis verification over TCP/TLS.
+- `src/wallet.ts`: discovery, verified UTXOs, coin selection, fee/PSBT construction,
+  signature-checked finalization, spend checks and explicit broadcast operations.
+- `src/fees.ts`: bounded, validated mempool.space Testnet4 estimates.
+- `src/bitcoin.ts`: original-transaction/UTXO/signature validation.
+- `src/wallet-storage.ts`: server/cursor preferences in SecureStore, and a
+  public signed-payment recovery file in the app document sandbox (no PIN/seed).
+- `src/WalletPanel.tsx` / `BroadcastPanel.tsx`: wallet, settings and broadcast UI.
+- `scripts/patch-tcp-tls.cjs`: pinned postinstall fix for Android TCP module TLS
+  hostname verification/SNI. Fails closed on unexpected dependency versions.
+  Never bypass certificate checks to connect to a self-signed Electrum server.
 
 ```sh
 npm ci
@@ -97,20 +120,27 @@ npm run lint
 npm run export:check
 ```
 
-See [the corrected spec](../docs/mobile-signer-spec.md) for the full protocol and
-physical acceptance checklist. A test against simulated relay sockets does not
-prove live ESP32/Android/iPhone interoperability. Camera permission, secure-store
-persistence, background behavior, file sharing, wrong-PIN/cooldown handling and
-one device-backed Testnet4 round trip still require physical-device testing.
+Tests use real Bitcoin/Nostr cryptography and deterministic test-only fixtures,
+with fake Electrum/relay connections. They cover network mismatches, framed RPC,
+bad UTXOs, gap discovery, coinbase maturity, exact coin control, fee rounding,
+send-max/dust, spent-input checks, finalization and broadcast binding/errors.
+They do not establish native socket interoperability or physical-device behavior.
 
-The existing Expo build-tool audit findings remain separate from runtime checks;
-this client is Testnet4-only and is not represented as production-audited.
+## Physical acceptance checklist
 
-## Verification record — 26 September 2026
+- Pair/reconnect on Android and iPhone; compare the public account with ESP32.
+- Connect to Testnet4 Electrs via TCP and trusted TLS; reject wrong-host, expired,
+  untrusted certificates and non-Testnet4 servers. Exercise local-network prompts.
+- Receive test coins on a fresh address; restart and ensure indices survive.
+- Sync both branches, pending transactions and change; simulate backend failures.
+- Select exact UTXOs, exclude immature coinbase, opt into unconfirmed inputs,
+  test max-send/insufficient funds/dust, and compare displayed versus final fees.
+- Fetch fees, test API failure and five-minute staleness, and use a manual rate.
+- Build/sign/reject on ESP32; test wrong PIN, cooldown, timeout and backgrounding.
+- Confirm broadcast separately, verify the txid, sync confirmation and restart.
+  Drop the broadcast reply; recover/check/retry the exact saved transaction.
+- Verify camera/file permissions, signed export and PIN clearing on background.
 
-Dependency installation, all 14 protocol/Bitcoin tests, TypeScript, lint and
-Android/iOS JavaScript exports passed. The standalone Android release build
-passed and its APK signature was verified: `artifacts/remote-signer-client-arm64.apk`,
-version 0.2.0 (code 2), ARM64, minimum Android 7. The APK uses the local test
-certificate. No physical Android/iPhone or live ESP32 round trip was tested.
-The corrected iOS native project has not been rebuilt.
+The corrected iOS native project still needs regeneration/CocoaPods and a device
+build. Physical Android/iPhone/ESP32 interoperability has not been verified.
+See [the specification](../docs/mobile-signer-spec.md) for bounds and phases.

@@ -2,13 +2,16 @@
   "expo": {
     "name": "Remote Signer Client",
     "slug": "remote-bitcoin-signer",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "pw.sats.remotebitcoinsigner"
+      "bundleIdentifier": "pw.sats.remotebitcoinsigner",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Connect to your Electrs server on your local network to sync and broadcast Testnet4 payments."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +23,7 @@
       "predictiveBackGestureEnabled": false,
       "package": "pw.sats.remotebitcoinsigner",
       "allowBackup": false,
-      "versionCode": 2
+      "versionCode": 3
     },
     "scheme": "remote-bitcoin-signer",
     "platforms": [

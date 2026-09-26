@@ -1,13 +1,14 @@
 # Remote Bitcoin signer — Guition JC3248W535
 
-A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate action in LNbits.
+A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. The mobile wallet or LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate, explicit action in the client.
 
 ## Mobile app
 
 The React Native / Expo project in [`mobile/`](mobile/README.md) starts with a
-Testnet4 remote client for Android and iOS. It pairs with the ESP32, submits
-PSBTs and encrypted wallet PINs, and verifies/exports signed PSBTs. Bitcoin keys
-and signing stay on the ESP32. Physical-device interoperability remains to be
+Testnet4 wallet client for Android and iOS. It pairs with the ESP32, syncs through
+a configurable Electrs server, offers coin control and mempool.space fee estimates,
+builds PSBTs locally, verifies device signatures and explicitly broadcasts in-app.
+LNbits is not required by the phone. Bitcoin keys and signing stay on the ESP32. Physical-device interoperability remains to be
 verified. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
 documents user interactions, Nostr event structures, security boundaries and
 phases toward the first live signing MVP. Local Android Studio/Xcode and
@@ -33,7 +34,9 @@ This builds the latest normal firmware and refuses to proceed unless the partiti
 
 The reference project is unchanged. Its ArduinoGFX/AXS15231B display and touch implementation, LVGL configuration, and Nostr transport libraries are reused here. Dependencies are pinned; public TLS trust roots are included in `data/cert/`.
 
-## First use
+## First use with LNbits (alternative client)
+
+For the standalone mobile wallet, follow the [in-app wallet flow](mobile/README.md#working-wallet-flow).
 
 1. On first setup choose a **settings PIN** of 6–32 digits, then choose **Continue wallet setup**. This PIN controls device settings independently of wallet decryption. Generate a recovery phrase, write it down, and verify all 12 words in order by tapping each word from four choices. Correct answers advance immediately; incorrect answers show “Incorrect word”. Alternatively restore a 12- or 24-word phrase. Set a separate 6–32 digit **wallet PIN**. The recovery phrase stays on the device. During signing, the paired browser sends the PIN directly to the device inside a signed, NIP-44 encrypted Nostr message; the LNbits server does not receive it.
 2. On the touchscreen open **Settings**, enter the settings PIN, then choose **Network settings**. Join the temporary **Bitcoin-Signer-…** Wi-Fi network using the displayed password or QR code, then open **http://192.168.4.1/** on your phone or computer. Choose **Scan for Wi-Fi** and select your network, or enter its name manually. Enter the Wi-Fi password (use **Show password** to check it) and one to three `wss://` relay URLs. The default relay is `wss://relay.nostrconnect.com`. Choose **Save and connect**. The setup access point closes after submission, on **Close setup Wi-Fi**, or after ten minutes. Network setup requires the settings PIN; it never decrypts the wallet. Relays must accept experimental ephemeral event kind **24134**, allow browser connections, and support the configured message sizes. Connections validate TLS certificates. Wait for network time synchronization.
@@ -64,7 +67,7 @@ Daily usage counts all signing reservations, including manually approved transac
 - Every input must belong to this account. Full previous transactions are required and their hashes, output indexes, scripts and amounts are verified. Conflicting witness metadata is rejected.
 - Recipient scripts: P2PKH, P2SH, P2WPKH and P2WSH. No Taproot, multisig inputs, arbitrary scripts, pre-signed inputs, or unsupported PSBT metadata.
 - One approval at a time; other requests receive `busy`. Requests expire after 150 seconds in the browser. Firmware accepts at most 180 seconds. Duplicate deliveries cannot cause another signature.
-- The signer validates supplied transaction data; it does not run a Bitcoin node or independently establish whether inputs are still unspent. LNbits provides chain data and broadcasting.
+- The signer validates supplied transaction data; it does not run a Bitcoin node or independently establish whether inputs are still unspent. The mobile client uses Electrs for chain data/broadcasting; LNbits is an alternative client.
 - PIN-encrypted storage uses PBKDF2-HMAC-SHA256 (210,000 rounds, random 16-byte salt) and AES-256-GCM (random 12-byte nonce). This is prototype protection, not secure-element or physical-extraction resistance. Secure boot/flash encryption are not provisioned.
 
 ## Tests

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Share, KeyboardAvoidingView, Platform } from 'react-native';
+import { Alert, AppState, ScrollView, Text, TextInput, View, Share, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -12,16 +12,14 @@ import { Buffer } from 'buffer';
 import { SignerClient, parsePairing } from './src/client';
 import type { ClientState, Connection } from './src/client';
 import type { PublicAccount } from './src/protocol';
-import { receiveAddress, reviewPsbt } from './src/bitcoin';
+import { reviewPsbt } from './src/bitcoin';
 import type { Review } from './src/bitcoin';
 import { loadIdentity, loadConnection, saveConnection, forgetConnection } from './src/storage';
+import { Button, styles } from './src/ui';
+import { WalletPanel } from './src/WalletPanel';
+import { BroadcastPanel } from './src/BroadcastPanel';
+import { loadPayment, savePayment, clearPayment } from './src/wallet-storage';
 
-function Button({ title, onPress, disabled = false, secondary = false }: { title: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
-    style={({ pressed }) => [styles.button, secondary && styles.secondary, (disabled || pressed) && styles.dim]}>
-    <Text style={[styles.buttonText, secondary && styles.white]}>{title}</Text>
-  </Pressable>;
-}
 const initial: ClientState = { status: 'Pair your ESP32 signing device to begin.', connected: 0, pinRequired: false, deadline: 0 };
 function ClientApp() {
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -29,6 +27,8 @@ function ClientApp() {
   const [identity, setIdentity] = useState('');
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [chainBusy, setChainBusy] = useState(false);
+  const [recovery, setRecovery] = useState<'loading' | 'ready' | 'error'>('loading');
   const [state, setState] = useState(initial);
   const [error, setError] = useState('');
   const [code, setCode] = useState('');
@@ -39,7 +39,7 @@ function ClientApp() {
   const [pin, setPin] = useState('');
   const [scanning, setScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [foreground, setForeground] = useState(AppState.currentState !== 'background');
   const service = useRef<SignerClient | null>(null);
   const epoch = useRef(0);
@@ -47,8 +47,9 @@ function ClientApp() {
   const scanningRef = useRef(false);
   const init = async () => {
     const secret = await loadIdentity();
-    try { setIdentity(getPublicKey(secret)); } finally { secret.fill(0); }
-    setConnection(await loadConnection()); setReady(true);
+    let pubkey: string;
+    try { pubkey = getPublicKey(secret); } finally { secret.fill(0); }
+    return { pubkey, connection: await loadConnection() };
   };
   const stop = () => {
     epoch.current++; service.current?.close(); service.current = null;
@@ -57,7 +58,7 @@ function ClientApp() {
   };
   useEffect(() => {
     let mounted = true;
-    init().catch(() => { if (mounted) setError('Could not load secure client storage. Unlock the phone or reset the connection.'); });
+    init().then(value => { if (mounted) { setIdentity(value.pubkey); setConnection(value.connection); setReady(true); } }).catch(() => { if (mounted) setError('Could not load secure client storage. Unlock the phone or reset the connection.'); });
     const timer = setInterval(() => setNow(Date.now()), 500);
     const sub = AppState.addEventListener('change', next => {
       setForeground(next === 'active');
@@ -68,10 +69,31 @@ function ClientApp() {
         setState({ ...initial, status: 'Disconnected while away. Reconnect to the device before a new request.' });
       }
     });
+    // Invalidate current operations rather than capturing an obsolete epoch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { mounted = false; clearInterval(timer); sub.remove(); epoch.current++; service.current?.close(); };
   }, []);
+  const restorePayment = async (a: PublicAccount, version: number) => {
+    setRecovery('loading');
+    try {
+      const saved = await loadPayment(a);
+      if (epoch.current !== version) return;
+      if (saved) { setPsbt(saved.original); setReview(reviewPsbt(saved.original, a)); setSigned(saved.signed); }
+      setRecovery('ready');
+    } catch {
+      if (epoch.current === version) { setRecovery('error'); setError('Saved payment could not be verified. Do not create a replacement until you have checked the device and transaction history.'); }
+    }
+  };
+  const clearSaved = () => account && Alert.alert('Clear this payment from the phone?', 'This does not cancel a signature or a broadcast. Check its transaction ID and history before sending another payment. Save a copy if you still need it.', [
+    { text: 'Keep payment', style: 'cancel' }, { text: 'Clear local payment', style: 'destructive', onPress: () => void (async () => {
+      setChainBusy(true);
+      try { await clearPayment(account); setSigned(''); setPsbt(''); setReview(null); setRecovery('ready'); setError(''); }
+      catch { setError('Could not clear saved payment'); }
+      finally { setChainBusy(false); }
+    })() },
+  ]);
   const run = async (work: (version: number) => Promise<void>) => {
-    if (working.current) return;
+    if (working.current || chainBusy) return;
     working.current = true; setBusy(true); setError('');
     const version = ++epoch.current;
     try { await work(version); }
@@ -96,13 +118,13 @@ function ClientApp() {
     const a = await c.pair(parsed.token, label.trim());
     if (epoch.current !== version) return;
     const saved = { ...config, xpub: a.xpub };
-    await saveConnection(saved); setConnection(saved); setAccount(a);
+    await saveConnection(saved); setConnection(saved); setAccount(a); await restorePayment(a, version);
   });
   const reconnect = () => connection && void run(async version => {
     const c = await client(connection, version); const a = await c.getAccount();
     if (epoch.current !== version) return;
     const saved = { ...connection, xpub: a.xpub };
-    await saveConnection(saved); setConnection(saved); setAccount(a);
+    await saveConnection(saved); setConnection(saved); setAccount(a); await restorePayment(a, version);
   });
   const inspect = () => {
     try { if (!account) throw new Error('Reconnect to retrieve the public account first'); setReview(reviewPsbt(psbt.trim(), account)); setSigned(''); setError(''); }
@@ -111,7 +133,10 @@ function ClientApp() {
   const sign = () => connection && void run(async version => {
     setSigned(''); const c = await client(connection, version);
     const result = await c.sign(psbt.trim());
-    if (epoch.current === version) { setSigned(result); setAccount(c.account ?? null); }
+    if (epoch.current === version && c.account) {
+      setSigned(result); setAccount(c.account);
+      await savePayment(c.account, { original: psbt.trim(), signed: result, state: 'ready', createdAt: Date.now() });
+    }
   });
   const unlock = async () => {
     const current = service.current, version = epoch.current;
@@ -138,7 +163,7 @@ function ClientApp() {
     try {
       if (!await Sharing.isAvailableAsync()) throw new Error('File sharing unavailable. Use Copy signed PSBT.');
       file.create({ overwrite: true }); file.write(Buffer.from(signed, 'base64'));
-      await Sharing.shareAsync(file.uri, { mimeType: 'application/octet-stream', dialogTitle: 'Return signed PSBT to LNbits' });
+      await Sharing.shareAsync(file.uri, { mimeType: 'application/octet-stream', dialogTitle: 'Export verified signed PSBT' });
     } catch (e) { setError((e as Error).message); }
     finally { if (file.exists) file.delete(); }
   };
@@ -149,19 +174,19 @@ function ClientApp() {
   };
   const forget = () => Alert.alert('Forget this device?', 'This removes this phone’s connection and transport identity. Revoke the old phone key in ESP32 Settings → Paired browsers as well.', [
     { text: 'Cancel', style: 'cancel' },
-    { text: 'Forget', style: 'destructive', onPress: () => { stop(); void forgetConnection().then(() => { setAccount(null); setConnection(null); setReview(null); setSigned(''); setPsbt(''); return init(); }).catch(() => setError('Could not clear secure storage')); } },
+    { text: 'Forget', style: 'destructive', onPress: () => { stop(); void forgetConnection().then(() => { setAccount(null); setConnection(null); setReview(null); setSigned(''); setPsbt(''); return init().then(value => { setIdentity(value.pubkey); setConnection(value.connection); setReady(true); }); }).catch(() => setError('Could not clear secure storage')); } },
   ]);
   return <SafeAreaView style={styles.safe}><StatusBar style="light" /><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
     <Text style={styles.brand}>REMOTE SIGNER / CLIENT</Text><Text style={styles.network}>TESTNET4 · BITCOIN KEYS STAY ON THE ESP32</Text>
     {!foreground ? <Text style={styles.title}>Client paused</Text> : <>
-      <Text style={styles.title}>Your signing device, connected.</Text>
+      <Text style={styles.title}>Your Bitcoin wallet. Your signing device.</Text>
       <Text accessibilityLiveRegion="polite" style={styles.text}>{state.status}</Text>
       <Text style={styles.muted}>{state.connected} relay connection{state.connected === 1 ? '' : 's'}{state.deadline ? ` · ${Math.max(0, Math.ceil((state.deadline - now) / 1000))}s remaining` : ''}</Text>
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
       <View style={styles.card}><Text style={styles.heading}>Phone identity</Text><Text selectable style={styles.mono}>{identity || 'Loading secure identity…'}</Text>
         <Text style={styles.muted}>Compare this key on the ESP32 when pairing. It is a Nostr transport identity, not a Bitcoin key.</Text>
       </View>
-      {!busy && <View style={styles.card}><Text style={styles.heading}>{connection ? 'Device connection' : 'Pair your ESP32'}</Text>
+      {!busy && !chainBusy && <View style={styles.card}><Text style={styles.heading}>{connection ? 'Device connection' : 'Pair your ESP32'}</Text>
         {connection && <><Text selectable style={styles.mono}>{connection.pubkey}</Text><Text style={styles.muted}>{connection.relays.join('\n')}</Text><Button title="Reconnect / refresh account" onPress={reconnect} disabled={!ready} /></>}
         <Text style={styles.text}>On the ESP32, open Settings → Pair a browser. Scan its QR or paste the pairing JSON, then approve on the device.</Text>
         <Button title="Scan pairing QR" secondary onPress={() => void scan()} disabled={!ready} />
@@ -175,17 +200,19 @@ function ClientApp() {
         <Button title="Forget connection" secondary onPress={forget} />
       </View>}
       {account && <View style={styles.card}><Text style={styles.heading}>Device public account</Text><Text style={styles.text}>Fingerprint {account.fingerprint} · {account.path}</Text>
-        <Text style={styles.muted}>First receive address (index 0; not a fresh-address allocator)</Text><Text selectable style={styles.mono}>{receiveAddress(account)}</Text>
-        <Button title="Share public account" secondary disabled={busy} onPress={() => void Share.share({ message: JSON.stringify({ descriptor: account.descriptor, xpub: account.xpub, fingerprint: account.fingerprint, path: account.path }, null, 2) }).catch(() => setError('Sharing failed'))} />
+        <Button title="Share public account" secondary disabled={busy || chainBusy} onPress={() => void Share.share({ message: JSON.stringify({ descriptor: account.descriptor, xpub: account.xpub, fingerprint: account.fingerprint, path: account.path }, null, 2) }).catch(() => setError('Sharing failed'))} />
       </View>}
-      {connection && <View style={styles.card}><Text style={styles.heading}>Sign a PSBT</Text><Text style={styles.text}>Prepare a Testnet4 payment in LNbits with full previous transactions, then import its unsigned PSBT here.</Text>
-        <TextInput accessibilityLabel="Unsigned PSBT base64" editable={!busy} style={[styles.input, { minHeight: 100 }]} value={psbt} onChangeText={value => { setPsbt(value); setReview(null); setSigned(''); }} multiline autoCapitalize="none" autoCorrect={false} maxLength={43692} placeholder="Paste unsigned PSBT (base64)" placeholderTextColor="#839b90" />
-        <Button title="Import PSBT file" secondary disabled={busy} onPress={() => void importFile()} />
-        <Button title="Review transaction" disabled={busy || !account || !psbt} onPress={inspect} />
+      <WalletPanel key={account?.xpub ?? 'unpaired'} account={account} disabled={busy || chainBusy || (!!account && recovery !== 'ready')} paymentPending={!!signed} onBusyChange={setChainBusy}
+        onInvalidate={() => { if (!signed) { setReview(null); setPsbt(''); } }} onPrepared={value => { if (account) { setPsbt(value); setReview(reviewPsbt(value, account)); setSigned(''); setError(''); } }} />
+      {account && (signed || recovery === 'error') && <Button title="Clear saved payment / start another" secondary disabled={busy || chainBusy} onPress={clearSaved} />}
+      {connection && <View style={styles.card}><Text style={styles.heading}>Transaction review / PSBT import</Text><Text style={styles.text}>Prepare a payment above, or optionally import a PSBT with full previous transactions. Review below before requesting a device signature.</Text>
+        <TextInput accessibilityLabel="Unsigned PSBT base64" editable={!busy && !chainBusy && !signed && recovery === 'ready'} style={[styles.input, { minHeight: 100 }]} value={psbt} onChangeText={value => { setPsbt(value); setReview(null); setSigned(''); }} multiline autoCapitalize="none" autoCorrect={false} maxLength={43692} placeholder="Paste unsigned PSBT (base64)" placeholderTextColor="#839b90" />
+        <Button title="Import PSBT file" secondary disabled={busy || chainBusy || !!signed || recovery !== 'ready'} onPress={() => void importFile()} />
+        <Button title="Review transaction" disabled={busy || chainBusy || !!signed || !account || !psbt || recovery !== 'ready'} onPress={inspect} />
         {review && <><Text style={styles.heading}>{review.inputs} input(s) · Fee {review.fee} sats</Text>
           {review.outputs.map((output, i) => <View key={i} style={styles.output}><Text style={styles.text}>{output.change ? 'Verified own output' : 'Recipient'} · {output.sats} sats</Text><Text selectable style={styles.mono}>{output.address}</Text></View>)}
           <Text style={styles.text}>Wallet debit: {review.debit} sats</Text><Text style={styles.muted}>Final approval is on the ESP32, unless its configured policy allows automatic approval. This phone cannot change that policy.</Text>
-          <Button title="Request signature from ESP32" disabled={busy} onPress={sign} />
+          <Button title="Request signature from ESP32" disabled={busy || chainBusy || !!signed || recovery !== 'ready'} onPress={sign} />
         </>}
       </View>}
       {state.pinRequired && <View style={styles.card}><Text style={styles.heading}>Device wallet PIN required</Text><Text style={styles.text}>Sent only to the paired ESP32 inside the encrypted, request-bound Nostr message. Never enter your settings PIN here.</Text>
@@ -193,23 +220,12 @@ function ClientApp() {
         <Button title="Unlock this signing request" onPress={() => void unlock()} disabled={!/^[0-9]{6,32}$/.test(pin)} />
       </View>}
       {busy && <Button title="Stop waiting / disconnect" secondary onPress={stop} />}
-      {!!signed && <View style={styles.card}><Text style={styles.heading}>Signed PSBT verified</Text><Text style={styles.text}>The transaction is unchanged and every Bitcoin signature is valid. Return this PSBT to LNbits, review, and broadcast there explicitly.</Text>
-        <Button title="Copy signed PSBT" onPress={() => void Clipboard.setStringAsync(signed).then(() => Alert.alert('Copied', 'Paste into LNbits to finalize and broadcast.')).catch(() => setError('Clipboard unavailable'))} />
+      {!!signed && <View style={styles.card}><Text style={styles.heading}>Signed PSBT verified</Text><Text style={styles.text}>The transaction is unchanged and every Bitcoin signature is valid. Review the final transaction and broadcast below when ready. A signature does not send coins.</Text>
+        <Button title="Copy signed PSBT" onPress={() => void Clipboard.setStringAsync(signed).then(() => Alert.alert('Copied', 'Verified signed PSBT copied.')).catch(() => setError('Clipboard unavailable'))} />
         <Button title="Share signed PSBT file" secondary onPress={() => void shareSigned()} />
       </View>}
+      {!!signed && account && !busy && <BroadcastPanel key={signed} account={account} original={psbt.trim()} signed={signed} disabled={busy || chainBusy} onBusyChange={setChainBusy} />}
     </>}
   </ScrollView></KeyboardAvoidingView></SafeAreaView>;
 }
 export default function App() { return <SafeAreaProvider><ClientApp /></SafeAreaProvider>; }
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0c1614' }, content: { padding: 22, gap: 16, maxWidth: 680, width: '100%', alignSelf: 'center' },
-  brand: { color: '#edf5ef', fontWeight: '800', letterSpacing: 2 }, network: { color: '#c5f5ab', fontSize: 11, letterSpacing: 1 },
-  title: { color: '#edf5ef', fontSize: 32, fontWeight: '700' }, heading: { color: '#edf5ef', fontSize: 19, fontWeight: '600' },
-  text: { color: '#d5e3d9', fontSize: 16, lineHeight: 24 }, muted: { color: '#abc1b2', fontSize: 13, lineHeight: 20 },
-  mono: { color: '#d5e3d9', fontSize: 13, lineHeight: 21 }, card: { padding: 18, borderRadius: 16, backgroundColor: '#182920', gap: 14 },
-  input: { color: '#fff', backgroundColor: '#0c1614', padding: 14, borderRadius: 8, fontSize: 15 },
-  button: { padding: 16, minHeight: 52, backgroundColor: '#d5faab', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  secondary: { backgroundColor: '#304737' }, buttonText: { color: '#13220c', fontSize: 16, fontWeight: '700', textAlign: 'center' },
-  white: { color: '#edf5ef' }, dim: { opacity: 0.45 }, error: { color: '#ffb3a8', fontSize: 15, lineHeight: 23 },
-  output: { borderTopWidth: 1, borderTopColor: '#405848', paddingTop: 12, gap: 8 },
-});
