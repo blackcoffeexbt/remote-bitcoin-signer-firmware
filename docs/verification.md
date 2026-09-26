@@ -60,7 +60,7 @@ This update has not been flashed. Actual Wi-Fi loss/recovery, remote PIN entry, 
 
 ## Separate settings PIN, touch responsiveness and automatic approval
 
-Settings now owns Network settings, pairing/revocation and Auto Signing Settings. A separately salted 6–32 digit settings credential is created during setup; existing devices first verify their wallet PIN once to authorize migration. Settings access uses no Bitcoin decryption and expires on close or after ten minutes without a settings command.
+Settings now owns Network settings, pairing/revocation and Auto Signing Settings. A separately salted 6–32 digit settings credential is created during setup; existing devices first verify their wallet PIN once to authorize migration. Settings access uses no Bitcoin decryption and expires on close or after one minute without touchscreen activity while the configuration portal is inactive.
 
 Touch polling is 10 ms. Confirmed lifts use a 20 ms release filter; ambiguous empty packets retain a 70 ms filter. Short stale contact tails cannot re-arm a key, while a new contact after a quiet interval can recover a missed initial press packet. Numeric keypads have no Done/dismiss key and remain open through PIN entry. Background status messages do not reset input controls, and incoming signing requests cannot replace open settings screens.
 

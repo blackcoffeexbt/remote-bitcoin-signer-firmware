@@ -1,4 +1,5 @@
 #include "display.h"
+#include "engine.h"
 
 #include <Arduino.h>
 
@@ -202,6 +203,7 @@ namespace Display {
         bool currently_touched = touch.touched();
         
         if (currently_touched) {
+            Engine::noteActivity();
             if (!backlight_on) wakeTouch = true;
             // Reset backlight timeout and turn backlight on if it was off
             resetBacklightTimeout();

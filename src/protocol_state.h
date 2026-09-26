@@ -3,6 +3,10 @@
 #include <deque>
 #include <string>
 namespace BitcoinProtocol {
+inline bool settingsIdleExpired(bool open, bool portalActive, uint32_t now,
+                                uint32_t lastActivity) {
+    return open && !portalActive && uint32_t(now - lastActivity) >= 60000;
+}
 // A bounded replay window never evicts an unexpired request to make room.
 class ReplayWindow {
     struct Entry {

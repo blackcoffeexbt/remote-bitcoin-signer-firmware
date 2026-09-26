@@ -59,8 +59,41 @@ LNbits' `CreatePsbt` accepts an optional `include_non_witness_utxo` boolean (def
 
 ## Settings authentication and approval policy
 
-Settings are local-only and protected by a separate settings PIN (6–32 digits), using an independently salted credential stored outside the wallet vault. Settings authentication never decrypts Bitcoin keys. Existing devices without a settings credential require one local wallet-PIN verification before creating it. New devices set the settings PIN during initial setup. Pairing, revocation, network changes and policy changes require settings authentication; signing requests cannot interrupt an open Settings session.
+Settings are local-only and protected by a separate settings PIN (6–32 digits), using an independently salted credential stored outside the wallet vault. Settings authentication never decrypts Bitcoin keys. Existing devices without a settings credential require one local wallet-PIN verification before creating it. New devices set the settings PIN during initial setup. Pairing, revocation, network changes and policy changes require settings authentication; signing requests cannot interrupt an open Settings session. Settings closes and clears settings authorization after one minute without touchscreen activity, including PIN entry and scrolling. This timeout is suspended while the configuration portal is active; closing the portal starts a fresh minute. The portal retains its own ten-minute lifetime.
 
 After wallet PIN unlock and full PSBT validation, compute debit as recipient outputs plus the fee, excluding verified change. Automatic approval requires both nonzero configured limits, debit strictly below the per-transaction threshold, and today's reserved total plus debit no greater than the daily limit. Other transactions require touchscreen review and approval. All requests still require the wallet PIN and all terminal signing paths clear Bitcoin keys.
 
 The global UTC-day counter includes both automatic and manual approvals. Persist the reservation atomically with the limits and day in NVS before producing a signature. Never refund on a timeout, crash, signing error, or failed result delivery. Reload this record on reboot; limit edits retain the counter. A new UTC day starts a new counter, using the synchronized device clock; a day earlier than the stored day is rejected for accounting. Invalid records and failed saves stop signing. The same request's replay handling prevents duplicate reservations; a new request, replacement or retry is counted separately. Broadcast confirmations are not used for accounting.
+
+## PIN attempts and automatic device wipe
+
+Settings PIN and wallet decryption have independent, persistent counters. Local
+and remote wallet unlocks share the wallet counter. The 16th failed verification
+(more than 15 failures) triggers erasure of the entire NVS partition and reboot
+into setup: wallet vault, settings PIN, Nostr identity, pairings, network settings,
+approval policy and counters are removed. Recovery requires the recovery phrase.
+This also erases any legacy configuration in other NVS namespaces.
+
+Each attempt is saved before credential verification; interrupted checks consume
+an attempt. Successful credential verification resets only that credential's
+counter. Failed writes stop authentication. Exhausted counters found on boot
+trigger erasure before connections or authentication. Failed erasure keeps the
+device locked and retries; it never returns to normal operation.
+
+Failure messages include the number of attempts remaining before wipe (15 after
+the first failure, 1 after the fifteenth). Settings failures appear on the device;
+remote wallet failures are sent in both the bound signing and unlock errors and
+shown locally. The final wipe notice is shown locally; relay delivery is best
+effort and does not delay erasure. Exponential cooldown remains 2–1,024 seconds
+and is reapplied on reboot. Cooldown refusals, unmatched/unauthenticated requests,
+replays and errors after credential verification do not consume PIN attempts.
+Malformed or damaged credentials that fail verification do consume attempts.
+
+Manual-approval progress retains `Ready to sign — approve on device` at sequence 5
+and adds an optional authenticated `reason` string (at most 256 characters).
+Updated LNbits displays the reason followed by `Waiting for on device approval`.
+Older clients can continue displaying the original status. Reasons distinguish a debit meeting/exceeding
+the per-transaction limit, exceeding the remaining daily allowance, both limits,
+or disabled automatic approval. Debit includes the fee. The same reason appears
+on the device review. LNbits displays the authenticated reason as plain text; signing
+remains pending until device approval and the final signed result.

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Remote Signer Client",
     "slug": "remote-bitcoin-signer",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -23,7 +23,7 @@
       "predictiveBackGestureEnabled": false,
       "package": "pw.sats.remotebitcoinsigner",
       "allowBackup": false,
-      "versionCode": 3
+      "versionCode": 4
     },
     "scheme": "remote-bitcoin-signer",
     "platforms": [
@@ -38,10 +38,11 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan the pairing QR displayed by your ESP32 signer.",
+          "cameraPermission": "Scan the pairing code on your signing device.",
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      "expo-router"
     ]
   }
 }

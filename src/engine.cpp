@@ -7,13 +7,16 @@
 #include "nip44/nip44.h"
 #include "nostr.h"
 #include "protocol_state.h"
+#include "pin_attempts.h"
 #include "wallet.h"
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <atomic>
 #include <deque>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <memory>
+#include <nvs_flash.h>
 #include <time.h>
 extern const uint8_t relayRoots[] asm("_binary_data_cert_roots_bin_start");
 namespace Engine {
@@ -26,16 +29,56 @@ static time_t pairExpiry = 0;
 static std::vector<String> urls;
 static std::vector<std::unique_ptr<WebSocketsClient>> sockets;
 static std::map<String, String> clients;
-static unsigned long unlockAfter = 0;
+static uint32_t unlockAfter = 0;
 static unsigned failures = 0;
 static bool settingsOpen = false, settingsAuthorized = false, migrationAuthorized = false;
-static uint32_t settingsUntil = 0, settingsRetryAfter = 0;
+static uint32_t settingsRetryAfter = 0;
+static std::atomic<uint32_t> lastActivity{0};
+static NetworkPortal portal;
+void noteActivity() {
+    lastActivity.store(millis(), std::memory_order_relaxed);
+}
+static bool settingsExpired() {
+    const auto touched = lastActivity.load(std::memory_order_relaxed);
+    return BitcoinProtocol::settingsIdleExpired(settingsOpen, portal.active(), millis(), touched);
+}
 static unsigned settingsFailures = 0;
+static bool wipeRequired = false;
+static unsigned loadFailures(const char *key) {
+    Preferences p;
+    require(p.begin("pin-attempts", false), "Cannot open PIN attempt storage");
+    const unsigned count = p.isKey(key) ? p.getUInt(key, PinAttempts::limit) : 0;
+    p.end();
+    return count;
+}
+static void saveFailures(const char *key, unsigned count) {
+    Preferences p;
+    require(p.begin("pin-attempts", false), "Cannot open PIN attempt storage");
+    const auto written = p.putUInt(key, count);
+    p.end();
+    require(written == sizeof(uint32_t), "Cannot save PIN attempts; authentication stopped");
+}
+template <typename Verify>
+static void checkPin(bool settings, Verify verify) {
+    auto &count = settings ? settingsFailures : failures;
+    auto &retry = settings ? settingsRetryAfter : unlockAfter;
+    try {
+        PinAttempts::verify(count,
+                            [settings](unsigned n) {
+                                saveFailures(settings ? "settings" : "wallet", n);
+                            },
+                            verify, [] { wipeRequired = true; },
+                            settings ? "Settings PIN" : "Wallet PIN");
+    } catch (...) {
+        retry = millis() + PinAttempts::cooldownMs(count);
+        throw;
+    }
+    retry = 0;
+}
 static ApprovalPolicy::State policy;
 static void requireSettings() {
-    require(settingsAuthorized && (int32_t)(settingsUntil - millis()) > 0,
+    require(settingsAuthorized && !settingsExpired(),
             "Enter the settings PIN first");
-    settingsUntil = millis() + 600000;
 }
 static void closeSettings() {
     settingsOpen = settingsAuthorized = migrationAuthorized = false;
@@ -48,7 +91,6 @@ struct Pending {
     uint64_t spend = 0;
 };
 static Pending pending;
-static NetworkPortal portal;
 static bool connectingNetwork = false;
 static uint32_t networkStarted = 0, lastWifiAttempt = 0;
 static bool wifiWasConnected = false, hasNetwork = false;
@@ -62,6 +104,30 @@ static void post(String type, String text = "", String data = "", String id = ""
     auto m = new Message{type, text, data, id};
     if (xQueueSend(events, &m, 0) != pdTRUE)
         delete m;
+}
+[[noreturn]] static void wipeDevice() {
+    account.close();
+    closeSettings();
+    pending = Pending{};
+    portal.stop();
+    sockets.clear();
+    replies.clear();
+    clients.clear();
+    wipe(secret);
+    wipe(pairToken);
+    WiFi.disconnect(true);
+    post("error", "0 attempts remaining. Wiping device. Restore from your recovery phrase.");
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    // Erase all NVS: wallet, credentials, transport identity, pairings, policy and Wi-Fi.
+    // Never resume authentication if erasure fails. Retry until erased, then reboot.
+    nvs_flash_deinit();
+    while (nvs_flash_erase() != ESP_OK) {
+        post("error", "Device wipe failed. Device locked; retrying erasure.");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    ESP.restart();
+    for (;;)
+        vTaskDelay(pdMS_TO_TICKS(1000));
 }
 static String json(const JsonDocument &doc) {
     require(!doc.overflowed(), "Message exceeds available memory");
@@ -99,7 +165,7 @@ static void publish(const String &wire) {
 }
 static void reply(const String &peer, const String &id, const String &method, const String &hash,
                   const String &result, const String &error, time_t expiry,
-                  const String &status = "", unsigned sequence = 0) {
+                  const String &status = "", unsigned sequence = 0, const String &reason = "") {
     DynamicJsonDocument d(70000);
     d["protocol"] = "bitcoin-signer";
     d["version"] = 1;
@@ -110,6 +176,8 @@ static void reply(const String &peer, const String &id, const String &method, co
     if (status.length()) {
         d["status"] = status;
         d["sequence"] = sequence;
+        if (reason.length())
+            d["reason"] = reason;
     } else if (error.length())
         d["error"] = error;
     else {
@@ -155,9 +223,9 @@ static String outputAddress(const Bytes &b) {
     require(address.length(), "Cannot display recipient address");
     return address;
 }
-static void progress(const char *text, unsigned sequence) {
+static void progress(const char *text, unsigned sequence, const String &reason = "") {
     reply(pending.peer, pending.id, pending.method, pending.hash, "{}", "", pending.expiry, text,
-          sequence);
+          sequence, reason);
     post("progress", text);
 }
 static void signPending(bool automatic) {
@@ -199,17 +267,18 @@ static void reviewPending() {
         signPending(true);
         return;
     }
-    String text = "Manual approval required\nClient: " + pending.label + "\nTESTNET4\n";
+    const String reason = policy.manualReason(pending.spend, time(nullptr)).c_str();
+    String text = "Manual approval required\n" + reason + "\nClient: " + pending.label + "\nTESTNET4\n";
     for (auto &out : review.tx.outputs)
         text += "\n" + String(out.change ? "CHANGE" : "RECIPIENT") + "\n" +
                 outputAddress(out.script) + "\n" + String((unsigned long long)out.amount) +
                 " sat\n";
     text += "\nFEE: " + String((unsigned long long)review.fee) + " sat";
-    progress("Ready to sign — approve on device", 5);
+    progress("Ready to sign — approve on device", 5, reason);
     post("review", text, "", pending.id);
 }
 static void receive(const uint8_t *payload, size_t length) {
-    if (!secret.length() || length > 100000 || time(nullptr) < 1700000000)
+    if (wipeRequired || !secret.length() || length > 100000 || time(nullptr) < 1700000000)
         return;
     DynamicJsonDocument d(190000);
     if (deserializeJson(d, payload, length, DeserializationOption::NestingLimit(12)))
@@ -298,23 +367,20 @@ static void receive(const uint8_t *payload, size_t length) {
             String phrase, transport;
             try {
                 progress("Decrypting wallet", 3);
-                unlock(pin, phrase, transport);
+                checkPin(false, [&] { unlock(pin, phrase, transport); });
                 require(transport == secret, "Transport identity mismatch");
                 account.open(phrase);
-                failures = 0;
                 wipe(pin);
                 wipe(phrase);
                 wipe(transport);
                 reviewPending();
                 reply(peer, id, method, psbtHash, "{}", "", expires);
-            } catch (...) {
+            } catch (const std::exception &ex) {
                 wipe(pin);
                 wipe(phrase);
                 wipe(transport);
                 account.close();
-                failures = std::min(failures + 1, 10U);
-                unlockAfter = millis() + 1000 * (1U << failures);
-                rejectPending("Unlock failed or request expired; retry signing");
+                rejectPending(ex.what());
                 throw;
             }
             return;
@@ -436,10 +502,13 @@ static void unlocked(const String &phrase) {
 static void command(Message &m) {
     if (m.type == "settings_open") {
         require(!pending.id.length(), "Finish the active request first");
+        if (settingsExpired())
+            closeSettings();
         settingsOpen = true;
+        noteActivity();
         if (!DeviceSettings::hasPin())
             post(!exists() || migrationAuthorized ? "settings_setup" : "settings_migrate");
-        else if (settingsAuthorized && (int32_t)(settingsUntil - millis()) > 0)
+        else if (settingsAuthorized)
             post("settings");
         else
             post("settings_pin");
@@ -449,7 +518,7 @@ static void command(Message &m) {
         post("progress", "Saving settings PIN... Please wait.");
         DeviceSettings::setPin(m.text);
         settingsOpen = settingsAuthorized = true;
-        settingsUntil = millis() + 600000;
+        noteActivity();
         migrationAuthorized = false;
         account.close();
         post("settings", "Settings PIN saved");
@@ -459,15 +528,12 @@ static void command(Message &m) {
         settingsAuthorized = false;
         try {
             post("progress", "Checking settings PIN... Please wait.");
-            DeviceSettings::verifyPin(m.text);
+            checkPin(true, [&] { DeviceSettings::verifyPin(m.text); });
             settingsOpen = settingsAuthorized = true;
-            settingsUntil = millis() + 600000;
-            settingsFailures = 0;
+            noteActivity();
             post("settings");
-        } catch (...) {
-            settingsFailures = std::min(settingsFailures + 1, 10U);
-            settingsRetryAfter = millis() + 1000 * (1U << settingsFailures);
-            post("settings_pin", "Wrong settings PIN or damaged settings. Wait before retrying.");
+        } catch (const std::exception &ex) {
+            post("settings_pin", ex.what());
         }
     } else if (m.type == "settings_close") {
         if (pending.method == "pair")
@@ -520,21 +586,18 @@ static void command(Message &m) {
         String phrase, transport;
         try {
             post("progress", "Checking PIN and decrypting wallet... This takes about 20 seconds.");
-            unlock(m.text, phrase, transport);
+            checkPin(false, [&] { unlock(m.text, phrase, transport); });
             secret = transport;
             wipe(transport);
             unlocked(phrase);
             account.close();
             migrationAuthorized = true;
             post("settings_setup");
-            failures = 0;
             wipe(phrase);
         } catch (...) {
             wipe(phrase);
             wipe(transport);
             account.close();
-            failures = std::min(failures + 1, 10U);
-            unlockAfter = millis() + 1000 * (1U << failures);
             throw;
         }
     } else if (m.type == "lock") {
@@ -651,6 +714,18 @@ static void run(void *) {
     }
 #endif
     Serial.println("Bitcoin signer worker ready");
+    try {
+        failures = loadFailures("wallet");
+        settingsFailures = loadFailures("settings");
+    } catch (const std::exception &ex) {
+        post("error", ex.what());
+        vTaskDelete(nullptr);
+        return;
+    }
+    if (failures >= PinAttempts::limit || settingsFailures >= PinAttempts::limit)
+        wipeDevice();
+    unlockAfter = millis() + PinAttempts::cooldownMs(failures);
+    settingsRetryAfter = millis() + PinAttempts::cooldownMs(settingsFailures);
     policy = DeviceSettings::loadPolicy();
     Preferences p;
     p.begin("btc-signer", true);
@@ -679,10 +754,13 @@ static void run(void *) {
     connectRelays();
     if (!exists() && !DeviceSettings::hasPin()) {
         settingsOpen = true;
+        noteActivity();
         post("settings_setup");
     } else
         post(exists() ? "locked" : "welcome", "Ready for signing requests from LNbits");
     for (;;) {
+        if (wipeRequired)
+            wipeDevice();
         Message *m = nullptr;
         if (xQueueReceive(commands, &m, 0) == pdTRUE) {
             try {
@@ -694,8 +772,13 @@ static void run(void *) {
             wipe(m->data);
             delete m;
         }
-        if (settingsAuthorized && (int32_t)(millis() - settingsUntil) >= 0) {
-            portal.stop();
+        if (wipeRequired)
+            wipeDevice();
+        // Suspend inactivity expiry while the configuration access point is open.
+        // Closing the portal leaves a fresh minute to review the settings screen.
+        if (portal.active())
+            noteActivity();
+        if (settingsExpired()) {
             closeSettings();
             pairToken = "";
             connectRelays();
@@ -759,8 +842,11 @@ static void run(void *) {
         if (pairToken.length() && time(nullptr) >= pairExpiry)
             pairToken = "";
         if (!portal.active() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000)
-            for (auto &s : sockets)
+            for (auto &s : sockets) {
                 s->loop();
+                if (wipeRequired)
+                    break;
+            }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

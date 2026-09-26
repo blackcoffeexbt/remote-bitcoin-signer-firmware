@@ -8,6 +8,10 @@ int main() {
     State p{10000, 25000, 0, day, true};
     assert(p.allows(9999, now));
     assert(!p.allows(10000, now)); // Strictly under the per-transaction amount.
+    assert(p.manualReason(9999, now).empty());
+    assert(p.manualReason(10000, now).find("per-transaction") != std::string::npos);
+    assert(p.manualReason(26000, now).find("daily allowance") != std::string::npos);
+    assert(p.manualReason(26000, now).find("per-transaction") != std::string::npos);
     p = p.reserve(9000, now);
     assert(p.spent == 9000);
     auto reboot = p; // Persisted day/spending loaded after restart.
@@ -15,6 +19,7 @@ int main() {
     p = p.reserve(9000, now);
     assert(p.allows(7000, now)); // Daily allowance may be used exactly.
     assert(!p.allows(7001, now));
+    assert(p.manualReason(7001, now) == "Transaction debit exceeds the remaining daily allowance");
     p = p.reserve(12000, now); // Manual approvals count too.
     assert(p.spent == 30000 && !p.allows(1, now));
     p.under = 15000; // Changing the limit must not refund usage.

@@ -45,6 +45,24 @@ struct State {
         return valid && clockValid(now) && under > 0 && daily > 0 && amount < under &&
                total <= daily && amount <= daily - total;
     }
+    std::string manualReason(uint64_t amount, int64_t now) const {
+        if (!valid)
+            return "Approval settings are damaged";
+        if (!clockValid(now))
+            return "Device time cannot be used for daily allowance";
+        if (!under || !daily)
+            return "Automatic approval is disabled";
+        std::string reason;
+        if (amount >= under)
+            reason = "Transaction debit meets or exceeds the per-transaction limit";
+        const auto total = used(now);
+        if (total > daily || amount > daily - total) {
+            if (!reason.empty())
+                reason += "; ";
+            reason += "Transaction debit exceeds the remaining daily allowance";
+        }
+        return reason;
+    }
     State reserve(uint64_t amount, int64_t now) const {
         if (!valid || !clockValid(now) || amount > maxSats || spent > maxSats)
             throw std::runtime_error("Cannot record daily allowance; check device time/settings");

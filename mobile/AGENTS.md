@@ -8,8 +8,10 @@ confirmation. Electrs supplies chain data; mempool.space supplies Testnet4 fee
 estimates. Maintain the two-slot signed-payment recovery journal, monotonic
 address cursors, and pinned Android TLS hostname-verification patch.
 The user requested local Android Studio/Xcode builds; prefer the commands in
-[README.md](README.md) over cloud builds. The current UI is a single screen;
-apply the routing guidance below when adding multi-screen navigation.
+[README.md](README.md) over cloud builds. The UI uses Expo Router with Wallet, Activity and Settings tabs;
+keep signing and wallet state in their shared providers across navigation.
+Pairing, server configuration and advanced PSBT tools belong in Settings.
+Use consumer-facing copy; keep implementation notes and test status in docs.
 
 ## Expo has changed — do not trust your training data
 

@@ -3,6 +3,13 @@
 #include <iostream>
 int main() {
     using namespace BitcoinProtocol;
+    assert(!settingsIdleExpired(true, false, 59999, 0));
+    assert(settingsIdleExpired(true, false, 60000, 0));
+    assert(!settingsIdleExpired(true, false, 60000, 1));
+    assert(!settingsIdleExpired(true, true, 600000, 0));
+    assert(!settingsIdleExpired(false, false, 600000, 0));
+    assert(settingsIdleExpired(true, false, 59900, UINT32_MAX - 99));
+    assert(!settingsIdleExpired(true, false, 59899, UINT32_MAX - 99));
     ReplayWindow w;
     const int64_t now = 1800000000;
     assert(w.accept("client-a", "id", now) == ReplayWindow::Fresh);

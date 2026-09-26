@@ -41,14 +41,14 @@ For the standalone mobile wallet, follow the [in-app wallet flow](mobile/README.
 1. On first setup choose a **settings PIN** of 6–32 digits, then choose **Continue wallet setup**. This PIN controls device settings independently of wallet decryption. Generate a recovery phrase, write it down, and verify all 12 words in order by tapping each word from four choices. Correct answers advance immediately; incorrect answers show “Incorrect word”. Alternatively restore a 12- or 24-word phrase. Set a separate 6–32 digit **wallet PIN**. The recovery phrase stays on the device. During signing, the paired browser sends the PIN directly to the device inside a signed, NIP-44 encrypted Nostr message; the LNbits server does not receive it.
 2. On the touchscreen open **Settings**, enter the settings PIN, then choose **Network settings**. Join the temporary **Bitcoin-Signer-…** Wi-Fi network using the displayed password or QR code, then open **http://192.168.4.1/** on your phone or computer. Choose **Scan for Wi-Fi** and select your network, or enter its name manually. Enter the Wi-Fi password (use **Show password** to check it) and one to three `wss://` relay URLs. The default relay is `wss://relay.nostrconnect.com`. Choose **Save and connect**. The setup access point closes after submission, on **Close setup Wi-Fi**, or after ten minutes. Network setup requires the settings PIN; it never decrypts the wallet. Relays must accept experimental ephemeral event kind **24134**, allow browser connections, and support the configured message sizes. Connections validate TLS certificates. Wait for network time synchronization.
 3. Start the included LNbits checkout on port 5001, with its onchain wallet and block explorer configured for Testnet4. Select or create a Testnet4 onchain wallet.
-4. Choose **Nostr signer**. On the device open **Settings → Pair a browser**, scan its QR code into LNbits (or enter its JSON pairing code), and choose **Pair**. Compare the browser public key and approve locally.
+4. Choose **Nostr signer**. On the device open **Settings → Connect Remote Client**, scan its QR code into LNbits (or enter its JSON pairing code), and choose **Pair**. Compare the browser public key and approve locally.
 5. After pairing approval, LNbits automatically imports the public wallet and shows confirmation. It receives only the account descriptor, fingerprint and public key. If import fails, the pairing is retained and **Retry public wallet import** is available. Reconnecting recognizes an already imported account.
 6. Receive test coins using the existing onchain wallet. Construct a payment and choose **Sign with device**. LNbits connects automatically and retrieves the current device session. Wait for **PIN required**, enter the device PIN in LNbits, and follow the progress messages. Unless the automatic-approval limits permit it, review the client, every full recipient address, amount, change and fee on the device; approve or reject.
 7. LNbits verifies that the signed PSBT matches its original transaction and verifies the signatures. Review the finalized transaction and choose **Broadcast** explicitly.
 
 Keep the wallet page open while waiting for approval. Browser pairing is remembered per LNbits user and wallet; Signing automatically retrieves a fresh device session, including after a restart. **Reconnect** remains available for checking the connection. Up to eight browsers can be paired. Revoke a browser using **Paired browsers** on the device. Forgetting the browser's local pairing does not revoke its identity on the device.
 
-PIN derivation takes roughly 20 seconds on this board; wait for the working screen to finish when saving or unlocking. The first touch on a dark display only wakes it. The device boots with the Bitcoin wallet locked while Wi-Fi and relay connections start automatically. Wi-Fi outages are retried every 15 seconds; relay connections and subscriptions are restored automatically. Each signing request requires the PIN again. Bitcoin keys are cleared before the signed result is sent, and on failure, rejection, or expiry. **Settings** uses its own PIN for pairing, network administration and automatic-approval limits. Close Settings to accept signing requests. Settings sessions expire after ten minutes without a settings command; closing Settings locks them immediately.
+PIN derivation takes roughly 20 seconds on this board; wait for the working screen to finish when saving or unlocking. The first touch on a dark display only wakes it. The device boots with the Bitcoin wallet locked while Wi-Fi and relay connections start automatically. Wi-Fi outages are retried every 15 seconds; relay connections and subscriptions are restored automatically. Each signing request requires the PIN again. Bitcoin keys are cleared before the signed result is sent, and on failure, rejection, or expiry. **Settings** uses its own PIN for pairing, network administration and automatic-approval limits. Close Settings to accept signing requests. Settings sessions expire after one minute without touchscreen activity while the configuration portal is inactive; closing Settings locks them immediately.
 
 **Existing-device upgrade:** if no settings PIN exists, open Settings and enter the existing wallet PIN once to authorize setup of the separate settings PIN. This also saves the existing relay identity and public account separately. Pairings remain valid. Subsequent boots need no local unlock to receive signing requests. The relay identity is stored separately in NVS so it can operate while the Bitcoin vault remains PIN-encrypted; it cannot derive Bitcoin signing keys.
 
@@ -79,6 +79,8 @@ clang++ -std=c++17 -fsanitize=address,undefined tests/protocol.cpp -o /tmp/bitco
 /tmp/bitcoin-protocol-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/approval-policy.cpp -o /tmp/approval-policy-tests
 /tmp/approval-policy-tests
+clang++ -std=c++17 -fsanitize=address,undefined tests/pin-attempts.cpp -o /tmp/pin-attempt-tests
+/tmp/pin-attempt-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/touch.cpp -o /tmp/signer-touch-tests
 /tmp/signer-touch-tests
 node --test tests/nostr-client.test.mjs tests/nostr-pairing-import.test.mjs
@@ -98,3 +100,23 @@ pio device monitor -b 115200
 Expect `BITCOIN SELFTEST PASS: recovery, vault, wrong PIN, tamper, NIP44`. These checks use disposable public test vectors and RAM only, with no writes to the wallet vault. Install the normal firmware afterwards. A successful build alone does not verify the hardware tests or a live Testnet4 payment.
 
 See [protocol.md](docs/protocol.md) for client interoperability and [verification.md](docs/verification.md) for the current validation record.
+
+### PIN retry and approval-status device checks
+
+PIN failures now show attempts remaining before a device wipe. Settings and wallet
+PINs have separate counters; local and remote wallet decryption share a counter.
+The 16th incorrect attempt wipes all NVS, including the wallet, transport identity,
+pairings and Wi-Fi settings. Successful verification resets its counter. Counters
+survive reboot; interrupted checks consume an attempt. See [protocol.md](docs/protocol.md).
+
+On a disposable device only, verify wrong settings/local-wallet/remote-wallet PINs,
+remaining-attempt messages, cooldown/reboot behavior, success resetting only the
+correct counter, and erasure at failure 16 followed by fresh setup. Exercise power
+loss during verification and erasure and storage-write failure. Confirm old
+pairings cannot reconnect after wipe. This is a destructive acceptance test and
+must not be run on a funded device as part of ordinary source checks.
+
+Verify LNbits displays the limit reason and “Waiting for on device approval” for
+per-transaction, daily and combined limits. Approval/rejection must still be bound
+to the active request; invalid PSBTs must not increment PIN failures. A firmware
+build and native tests do not establish physical erasure or live relay delivery.

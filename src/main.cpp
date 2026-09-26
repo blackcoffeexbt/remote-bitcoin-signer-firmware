@@ -138,9 +138,17 @@ bool send(const String &type, const String &text = "", const String &data = "",
         status("Busy, please try again");
         return false;
     }
+    const bool checkingPin = type == "settings_unlock" || type == "settings_create" ||
+                             type == "unlock";
+    if (checkingPin && keyboard) {
+        lv_obj_del(keyboard);
+        keyboard = nullptr;
+        lv_obj_set_height(page, DeviceUI::height);
+    }
     for (uint32_t i = 0; i < lv_obj_get_child_cnt(page); i++) {
         auto child = lv_obj_get_child(page, i);
-        if (lv_obj_check_type(child, &lv_btn_class))
+        if (lv_obj_check_type(child, &lv_btn_class) ||
+            (checkingPin && lv_obj_check_type(child, &lv_textarea_class)))
             lv_obj_add_state(child, LV_STATE_DISABLED);
     }
     if (keyboard)
@@ -151,6 +159,10 @@ bool send(const String &type, const String &text = "", const String &data = "",
         status("Creating your wallet...");
     else if (type == "unlock")
         status("Unlocking wallet with your PIN...");
+    else if (type == "settings_unlock")
+        status("Checking settings PIN... Please wait.");
+    else if (type == "settings_create")
+        status("Saving settings PIN... Please wait.");
     else if (type == "network_setup")
         status("Starting setup Wi-Fi access point...");
     else if (type == "network_cancel")
@@ -167,6 +179,8 @@ bool send(const String &type, const String &text = "", const String &data = "",
         status("Processing your approval...");
     else if (type == "reject")
         status("Rejecting request and notifying browser...");
+    if (checkingPin && statusLabel)
+        lv_obj_scroll_to_view(statusLabel, LV_ANIM_OFF);
     return true;
 }
 void pinSetup() {
@@ -247,7 +261,7 @@ void settingsMenu(const String &text = "") {
     navigation("Auto signing", "Transaction and daily limits", LV_SYMBOL_OK,
                [](lv_event_t *) { send("auto_settings"); });
     if (Wallet::exists()) {
-        navigation("Pair a browser", "Connect your LNbits wallet", LV_SYMBOL_PLUS,
+        navigation("Connect Remote Client", "Connect your LNbits wallet", LV_SYMBOL_PLUS,
                    [](lv_event_t *) { send("pair_code"); });
         navigation("Paired browsers", "Manage trusted connections", LV_SYMBOL_LIST,
                    [](lv_event_t *) { send("clients"); });
@@ -389,7 +403,8 @@ void handle(Engine::Message &m) {
         lv_obj_clear_state(keyboard, LV_STATE_DISABLED);
     for (uint32_t i = 0; i < lv_obj_get_child_cnt(page); i++) {
         auto child = lv_obj_get_child(page, i);
-        if (lv_obj_check_type(child, &lv_btn_class))
+        if (lv_obj_check_type(child, &lv_btn_class) ||
+            lv_obj_check_type(child, &lv_textarea_class))
             lv_obj_clear_state(child, LV_STATE_DISABLED);
     }
     if (m.type == "settings") {

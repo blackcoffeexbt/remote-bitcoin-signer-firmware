@@ -62,12 +62,30 @@ test('wrong peer, hash, request id, network, and tampered signature are ignored'
     await c.receive(response(c,body(c)));await promise
   }finally{c.close()}
 })
-test('device rejection, busy, revoked pairing and restart session errors propagate',async()=>{
-  for(const error of ['User rejected','busy','unauthorized','Device restarted; reconnect first']) {
+test('device rejection, PIN attempts, busy, revoked pairing and restart session errors propagate',async()=>{
+  for(const error of ['User rejected','busy','unauthorized','Device restarted; reconnect first',
+    'Wallet PIN incorrect or damaged credential. 1 attempts remaining before device wipe. Wait before retrying.',
+    'Wallet PIN incorrect or damaged credential. 0 attempts remaining before device wipe. Wiping device.']) {
     const c=setup();try {const promise=c.request('sign_psbt');const assertion=assert.rejects(promise,{message:error});
       await c.receive(response(c,body(c,{error})));await assertion
     }finally{c.close()}
   }
+})
+test('limit reason and waiting for device approval reach LNbits without settling signing', async () => {
+  const c = setup(), statuses = []
+  c.onStatus = value => statuses.push(value)
+  try {
+    const signed = c.request('sign_psbt', {}, 'a'.repeat(64))
+    const original = body(c)
+    const status = 'Transaction debit meets or exceeds the per-transaction limit; Transaction debit exceeds the remaining daily allowance. Waiting for on device approval'
+    const reason = 'Transaction debit meets or exceeds the per-transaction limit; Transaction debit exceeds the remaining daily allowance'
+    await c.receive(response(c, {...original, result: undefined,
+      status: 'Ready to sign — approve on device', reason, sequence: 5}))
+    assert.deepEqual(statuses, [status])
+    assert.equal(c.pending.size, 1)
+    await c.receive(response(c, {...original, result: {psbt: 'signed'}}))
+    assert.deepEqual(await signed, {psbt: 'signed'})
+  } finally { c.close() }
 })
 test('disconnect rejects requests; a second request cannot replace active review',async()=>{
   const c=setup();const pending=c.request('get_account');const assertion=assert.rejects(pending,/disconnected/)

@@ -60,7 +60,7 @@ must not depend on that checkout being installed. See also [protocol.md](protoco
    closes it. Default relay: `wss://relay.nostrconnect.com`. Device validates TLS
    and waits for synchronized time. Wi-Fi reconnect attempts occur every 15s.
 3. **Pair:** open a Testnet4 onchain wallet in LNbits and choose Nostr signer.
-   Open Settings → Pair a browser on the device. Scan/paste the pairing JSON
+   Open Settings → Connect Remote Client on the device. Scan/paste the pairing JSON
    into LNbits, enter a printable client label and choose Pair. Device shows the
    label and full browser Nostr public key. Compare and approve or reject locally.
    Approval consumes the token and saves the pairing (maximum eight clients).
@@ -90,7 +90,7 @@ must not depend on that checkout being installed. See also [protocol.md](protoco
 On boot the wallet is locked while relay transport remains available. A legacy
 vault needs one local unlock to provision the independent transport/public
 metadata and one-time authorization to create a settings credential. Settings
-expires after ten minutes without a settings command, or immediately on close;
+expires after one minute without touchscreen activity while the configuration portal is inactive, or immediately on close;
 signing cannot interrupt an open settings session. Revocation rejects future
 requests and cancels pending work from that client. Forgetting browser storage
 does not revoke the device pairing. Old approval callbacks are request-ID-bound.
@@ -175,7 +175,13 @@ session and hash, while the parent awaits a PIN. The browser sets the unlock
 deadline equal to the parent's deadline; the firmware also requires the parent
 to remain live. Wrong PIN/validation failure terminates the parent; unmatched
 unlock or cooldown refusal does not. Failed unlocks use exponential backoff
-starting at two seconds and capped at 1,024 seconds.
+starting at two seconds and capped at 1,024 seconds, reapplied on restart.
+Separate persistent settings-PIN and wallet-PIN counters wipe all device NVS on
+the 16th failed verification. Successful verification resets only its counter;
+interrupted checks consume an attempt. Failure messages show attempts remaining
+before wipe locally and, for remote unlocks, in bound signing/unlock errors.
+Validation/signing errors do not count as PIN failures. See [protocol.md](protocol.md)
+for erasure and storage-failure behavior.
 
 ### Responses and progress
 
@@ -200,6 +206,10 @@ There is no `expires` field in the response. Use the original local deadline.
 | 5 | `Ready to sign — approve on device` OR `Automatically approved` |
 | 6 | `Signing` |
 | 7 | `Signing complete` |
+
+Manual-approval status 5 may include an authenticated `reason` string describing
+the exceeded limit or disabled automatic approval. Updated LNbits displays it with
+“Waiting for on device approval”; existing mobile clients retain the status text.
 
 Ignore older/duplicate sequences and never extend deadlines on progress. Even
 sequence 7 is not final success; only `result.psbt` is. Match all binding fields
@@ -278,7 +288,7 @@ SIGHASH_ALL signature from the expected account key on every input, verifies
 ECDSA against the **original** UTXOs and returns the original maps plus only
 those verified signatures. Returned metadata cannot change the reviewed PSBT.
 
-`App.tsx`, `WalletPanel.tsx` and `BroadcastPanel.tsx` provide pairing, server
+`ClientProvider.tsx`, `WalletProvider.tsx`, `screens.tsx` and `BroadcastPanel.tsx` provide pairing, server
 preferences, account retrieval, wallet sync, receive/send, coin control, fees,
 transaction review, authenticated PIN handling, recovery and explicit broadcast.
 Approval/rejection and device settings stay on ESP32.
@@ -405,7 +415,7 @@ broadcast; always-on background signing; Taproot/multisig inputs.
 
 ## Physical acceptance checklist
 
-1. Open ESP32 Settings → Pair a browser. Scan its QR from the phone or paste the
+1. Open ESP32 Settings → Connect Remote Client. Scan its QR from the phone or paste the
    JSON. Confirm the phone's displayed key on the ESP32 and approve there.
 2. Verify the descriptor/xpub/fingerprint against the device/LNbits account.
    Restart the phone and reconnect; the client key and pairing should survive.
@@ -439,3 +449,27 @@ gates. See [mobile/README.md](../mobile/README.md) for build and test instructio
 - [Bitcoin Core Testnet4 chain parameters](https://github.com/bitcoin/bitcoin/blob/master/src/kernel/chainparams.cpp)
 - [mempool.space API](https://mempool.space/docs/api/rest)
 - [React Native TCP/TLS module](https://github.com/Rapsssito/react-native-tcp-socket)
+
+## Consumer wallet navigation — v0.4
+
+Expo Router routes under `mobile/src/app/` provide Wallet, Activity and Settings
+bottom tabs. Wallet shows balance, Send/Receive shortcuts, a saved-payment entry
+and recent activity. Receive displays a QR code and copy/share actions. Send
+collects recipient and amount, with separate fee and coin-control screens, then
+opens payment review, device PIN/approval and explicit **Send payment** confirmation.
+Activity provides progressively loaded transactions with expandable identifiers.
+
+Device pairing lives only in Settings → Signing device. Server configuration is
+Settings → Wallet server. Public account details and PSBT import/export are
+Settings → Advanced tools. Full pairing verification codes appear only while
+pairing. Normal screens never display Nostr/relay/protocol diagnostics, engineering
+notes, conversation history or implementation/testing caveats. Testnet4 remains
+visible as the actual wallet network. Backend errors are translated into actionable
+wallet messages without echoing arbitrary server text.
+
+Shared providers preserve public wallet state, selections and prepared payments
+across navigation. Navigating between pages does not duplicate a signing request.
+Backgrounding invalidates active operations, closes connections, clears PIN and
+pairing input, and covers the UI. Returning never resumes signing or broadcasting
+automatically. Signed-payment recovery, explicit send confirmation, account
+pinning and the existing wire contract remain unchanged.

@@ -1,6 +1,6 @@
 {
   "name": "remote-bitcoin-signer-mobile",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main": "index.ts",
   "dependencies": {
     "@noble/curves": "^2.4.0",
@@ -11,17 +11,24 @@
     "expo": "~57.0.25",
     "expo-camera": "~57.0.5",
     "expo-clipboard": "~57.0.2",
+    "expo-constants": "~57.0.19",
     "expo-crypto": "~57.0.3",
     "expo-dev-client": "~57.0.19",
     "expo-document-picker": "~57.0.2",
     "expo-file-system": "~57.0.7",
+    "expo-linking": "~57.0.11",
+    "expo-router": "~57.0.23",
     "expo-secure-store": "~57.0.4",
     "expo-sharing": "~57.0.22",
     "expo-status-bar": "~57.0.1",
     "nostr-tools": "^2.25.2",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-qrcode-svg": "^6.3.26",
     "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4",
     "react-native-tcp-socket": "6.4.3"
   },
   "devDependencies": {
@@ -39,7 +46,7 @@
     "ios:device": "expo run:ios --device",
     "prebuild": "expo prebuild",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint App.tsx index.ts src tests scripts plugins",
+    "lint": "eslint index.ts src tests scripts plugins",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "export:check": "expo export --platform all --output-dir dist",
     "postinstall": "node scripts/patch-tcp-tls.cjs"
