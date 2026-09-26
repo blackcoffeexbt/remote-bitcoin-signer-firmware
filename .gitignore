@@ -1,0 +1,7 @@
+.pio/
+lnbits
+.DS_Store
+__pycache__/
+tests/generated/
+output/
+.playwright-cli/
