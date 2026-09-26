@@ -160,9 +160,9 @@ bool send(const String &type, const String &text = "", const String &data = "",
     else if (type == "unlock")
         status("Unlocking wallet with your PIN...");
     else if (type == "settings_unlock")
-        status("Checking settings PIN... Please wait.");
+        status("Verifying PIN... Please wait.");
     else if (type == "settings_create")
-        status("Saving settings PIN... Please wait.");
+        status("Saving PIN... Please wait.");
     else if (type == "network_setup")
         status("Starting setup Wi-Fi access point...");
     else if (type == "network_cancel")
@@ -258,12 +258,12 @@ void settingsMenu(const String &text = "") {
         label(text);
     navigation("Network", "Wi-Fi and Nostr relays", LV_SYMBOL_WIFI,
                [](lv_event_t *) { send("network_setup"); });
-    navigation("Auto signing", "Transaction and daily limits", LV_SYMBOL_OK,
+    navigation("Auto signing policies", "Transaction and daily limits", LV_SYMBOL_OK,
                [](lv_event_t *) { send("auto_settings"); });
     if (Wallet::exists()) {
-        navigation("Connect Remote Client", "Connect your LNbits wallet", LV_SYMBOL_PLUS,
+        navigation("Connect", "Connect a remote control", LV_SYMBOL_PLUS,
                    [](lv_event_t *) { send("pair_code"); });
-        navigation("Paired browsers", "Manage trusted connections", LV_SYMBOL_LIST,
+        navigation("Paired browsers", "Manage connections", LV_SYMBOL_LIST,
                    [](lv_event_t *) { send("clients"); });
     }
     button(Wallet::exists() ? "Close Settings" : "Continue wallet setup",
@@ -277,7 +277,7 @@ void settingsPin(bool create, bool migration = false, const String &text = "") {
         create ? "Choose a separate settings PIN, 6-32 digits. This does not decrypt your wallet."
         : migration
             ? "Enter the existing wallet PIN once to authorize creating your separate settings PIN."
-            : "Enter your settings PIN, not your wallet decryption PIN.");
+            : "Enter your settings PIN");
     if (text.length())
         label(text);
     input1 = input(create      ? "New settings PIN"
@@ -321,7 +321,7 @@ void settingsPin(bool create, bool migration = false, const String &text = "") {
 void autoSettings(const String &text, const String &message) {
     DynamicJsonDocument d(512);
     deserializeJson(d, text);
-    screen("Auto Signing Settings");
+    screen("Auto Signing Policies");
     label("Wallet PIN is always required. Below both limits, touchscreen approval is skipped. 0 "
           "disables it.");
     input1 = input("Approve transactions under (sats)", false, false, true);
@@ -344,7 +344,6 @@ void lockScreen(const String &text) {
     DeviceUI::statusStyle(badge);
     if (text.length())
         label(text);
-    label("Start a signing request in LNbits. Enter your wallet PIN there when prompted.");
     DeviceUI::label(page,
                     WiFi.status() == WL_CONNECTED ? LV_SYMBOL_WIFI "  Wi-Fi connected"
                                                   : LV_SYMBOL_WIFI "  Connecting to Wi-Fi...",
@@ -433,14 +432,13 @@ void handle(Engine::Message &m) {
         deserializeJson(details, m.text);
         String ssid = details["ssid"] | "", password = details["password"] | "";
         screen("Set up Wi-Fi and relays");
-        label("On your phone or computer, join this setup Wi-Fi. Stay connected if it says no "
-              "internet.");
+        label("Connect to this WiFi network from your phone or computer");
         label("Network: " + ssid + "\nPassword: " + password);
+        label("Navigate to http://192.168.4.1 in a web browser to continue the setup.");
         String wifiCode = "WIFI:T:WPA;S:" + ssid + ";P:" + password + ";;";
         auto qr = lv_qrcode_create(page, 200, lv_color_black(), lv_color_white());
         lv_qrcode_update(qr, wifiCode.c_str(), wifiCode.length());
-        label("Then open http://192.168.4.1\nSetup closes after 10 minutes.");
-        button("Close setup Wi-Fi", [](lv_event_t *) { send("network_cancel"); });
+        button("Exit setup", [](lv_event_t *) { send("network_cancel"); });
         Wallet::wipe(password);
         Wallet::wipe(wifiCode);
     } else if (m.type == "home") {
@@ -464,11 +462,10 @@ void handle(Engine::Message &m) {
             },
             DeviceUI::Tone::Secondary);
     } else if (m.type == "code") {
-        screen("Pair browser - valid 3 minutes");
-        label("Scan this in LNbits. Confirm the browser name and key on this device.");
+        screen("Connect remote client");
+        label("Scan this QR code with your remote client to start the pairing process.");
         auto qr = lv_qrcode_create(page, 280, lv_color_black(), lv_color_white());
         lv_qrcode_update(qr, m.text.c_str(), m.text.length());
-        label(m.text);
         button(
             "Back to Settings", [](lv_event_t *) { send("settings_open"); },
             DeviceUI::Tone::Secondary);

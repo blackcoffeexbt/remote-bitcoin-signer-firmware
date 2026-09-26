@@ -2,22 +2,45 @@
 
 A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. The mobile wallet or LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate, explicit action in the client.
 
-## Mobile app
+## What this repository contains
 
-The React Native / Expo project in [`../mobile/`](../mobile/README.md) starts with a
-Testnet4 wallet client for Android and iOS. It pairs with the ESP32, syncs through
-a configurable Electrs server, offers coin control and mempool.space fee estimates,
-builds PSBTs locally, verifies device signatures and explicitly broadcasts in-app.
-LNbits is not required by the phone. Bitcoin keys and signing stay on the ESP32. Physical-device interoperability remains to be
-verified. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
-documents user interactions, Nostr event structures, security boundaries and
-phases toward the first live signing MVP. Local Android Studio/Xcode and
-physical-device testing instructions are in the [mobile guide](../mobile/README.md).
+Firmware for the **Guition JC3248W535 ESP32-S3**, configured for 16 MB flash and
+8 MB PSRAM. It keeps the Bitcoin wallet on the device and connects to remote
+clients using signed, NIP-44 encrypted Nostr messages.
 
-## Build and install
+- Create or restore a BIP39 wallet and protect it with a wallet PIN.
+- Protect device settings with a separate settings PIN.
+- Connect up to eight remote clients, including the mobile app and LNbits.
+- Validate every transaction before manual or policy-based approval.
+- Show the approval-limit reason to LNbits while waiting for device approval.
+- Persist PIN failure counters and wipe device storage on the 16th failed attempt.
+
+**Testnet4 only.** This is experimental firmware. Automated tests and successful
+builds do not establish physical-device security or end-to-end interoperability.
+
+## Requirements and quick start
+
+Install PlatformIO Core or the PlatformIO editor extension. A USB connection to
+the board is needed for flashing and serial monitoring. Run commands from this
+repository's root, the directory containing `platformio.ini`.
 
 ```sh
 pio run -e esp32-s3-n16r8v
+```
+
+This builds `.pio/build/esp32-s3-n16r8v/firmware.bin` without flashing hardware.
+Dependencies and the target board are defined in [platformio.ini](platformio.ini).
+Neither the mobile nor LNbits repository is required to compile the firmware.
+
+Use a compatible remote client to prepare transactions and broadcast them after
+signing. In the combined workspace, the [mobile app guide](../mobile/README.md)
+covers Android/iOS setup; LNbits lives in the separate `../lnbits/` repository.
+
+## Install on the device
+
+Choose your board's actual serial port in place of the example below.
+
+```sh
 pio run -e esp32-s3-n16r8v -t upload --upload-port /dev/cu.usbmodem1101
 pio device monitor -b 115200
 ```
@@ -39,8 +62,8 @@ The reference project is unchanged. Its ArduinoGFX/AXS15231B display and touch i
 For the standalone mobile wallet, follow the [in-app wallet flow](../mobile/README.md#working-wallet-flow).
 
 1. On first setup choose a **settings PIN** of 6–32 digits, then choose **Continue wallet setup**. This PIN controls device settings independently of wallet decryption. Generate a recovery phrase, write it down, and verify all 12 words in order by tapping each word from four choices. Correct answers advance immediately; incorrect answers show “Incorrect word”. Alternatively restore a 12- or 24-word phrase. Set a separate 6–32 digit **wallet PIN**. The recovery phrase stays on the device. During signing, the paired browser sends the PIN directly to the device inside a signed, NIP-44 encrypted Nostr message; the LNbits server does not receive it.
-2. On the touchscreen open **Settings**, enter the settings PIN, then choose **Network settings**. Join the temporary **Bitcoin-Signer-…** Wi-Fi network using the displayed password or QR code, then open **http://192.168.4.1/** on your phone or computer. Choose **Scan for Wi-Fi** and select your network, or enter its name manually. Enter the Wi-Fi password (use **Show password** to check it) and one to three `wss://` relay URLs. The default relay is `wss://relay.nostrconnect.com`. Choose **Save and connect**. The setup access point closes after submission, on **Close setup Wi-Fi**, or after ten minutes. Network setup requires the settings PIN; it never decrypts the wallet. Relays must accept experimental ephemeral event kind **24134**, allow browser connections, and support the configured message sizes. Connections validate TLS certificates. Wait for network time synchronization.
-3. Start the included LNbits checkout on port 5001, with its onchain wallet and block explorer configured for Testnet4. Select or create a Testnet4 onchain wallet.
+2. On the touchscreen open **Settings**, enter the settings PIN, then choose **Network**. Join the temporary **Bitcoin-Signer-…** Wi-Fi network using the displayed password or QR code, then open **http://192.168.4.1/** on your phone or computer. Choose **Scan for Wi-Fi** and select your network, or enter its name manually. Enter the Wi-Fi password (use **Show password** to check it) and one to three `wss://` relay URLs. The default relay is `wss://relay.nostrconnect.com`. Choose **Save and connect**. The setup access point closes after submission, on **Close setup Wi-Fi**, or after ten minutes. Network setup requires the settings PIN; it never decrypts the wallet. Relays must accept experimental ephemeral event kind **24134**, allow browser connections, and support the configured message sizes. Connections validate TLS certificates. Wait for network time synchronization.
+3. Start the separate LNbits checkout using its own setup instructions, with its onchain wallet and block explorer configured for Testnet4. Select or create a Testnet4 onchain wallet.
 4. Choose **Nostr signer**. On the device open **Settings → Connect Remote Client**, scan its QR code into LNbits (or enter its JSON pairing code), and choose **Pair**. Compare the browser public key and approve locally.
 5. After pairing approval, LNbits automatically imports the public wallet and shows confirmation. It receives only the account descriptor, fingerprint and public key. If import fails, the pairing is retained and **Retry public wallet import** is available. Reconnecting recognizes an already imported account.
 6. Receive test coins using the existing onchain wallet. Construct a payment and choose **Sign with device**. LNbits connects automatically and retrieves the current device session. Wait for **PIN required**, enter the device PIN in LNbits, and follow the progress messages. Unless the automatic-approval limits permit it, review the client, every full recipient address, amount, change and fee on the device; approve or reject.
@@ -54,7 +77,7 @@ PIN derivation takes roughly 20 seconds on this board; wait for the working scre
 
 ## Automatic approval
 
-Open **Settings → Auto Signing Settings** to set **Approve transactions under (sats)** and **Total allowed per UTC day (sats)**. Both default to 0, which disables automatic approval. The transaction debit is all recipient outputs plus the fee, excluding verified change. Automatic approval requires a debit strictly below the transaction limit and a running daily total no greater than the daily allowance. Otherwise the device shows the full transaction for manual approval.
+Open **Settings → Auto signing** to set **Approve transactions under (sats)** and **Total allowed per UTC day (sats)**. Both default to 0, which disables automatic approval. The transaction debit is all recipient outputs plus the fee, excluding verified change. Automatic approval requires a debit strictly below the transaction limit and a running daily total no greater than the daily allowance. Otherwise the device shows the full transaction for manual approval.
 
 The wallet PIN is still required remotely for **every** request, including automatically approved requests. Bitcoin keys are cleared immediately after signing. LNbits shows **Automatically approved**, followed by signing progress; broadcasting remains manual.
 
@@ -72,6 +95,12 @@ Daily usage counts all signing reservations, including manually approved transac
 
 ## Tests
 
+Run the firmware build first to populate PlatformIO's pinned libraries. Native
+checks require Python 3 and Clang with sanitizers; browser checks require Node.js
+and the sibling LNbits checkout with its dependencies installed. The Python
+signing comparison uses that checkout's `wallycore` environment and test vectors.
+
+
 ```sh
 python3 scripts/test-native.py
 ../lnbits/.venv/bin/python tests/test_signing.py
@@ -83,7 +112,7 @@ clang++ -std=c++17 -fsanitize=address,undefined tests/pin-attempts.cpp -o /tmp/p
 /tmp/pin-attempt-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/touch.cpp -o /tmp/signer-touch-tests
 /tmp/signer-touch-tests
-node --test tests/nostr-client.test.mjs tests/nostr-pairing-import.test.mjs
+node --test tests/nostr-client.test.mjs tests/nostr-pairing-import.test.mjs tests/network-portal.test.mjs
 ```
 
 The native validator and signer are the production C++ code, compiled with address/undefined-behavior sanitizers. Tests compare its signature and final transaction against independent libwally vectors and reject malformed or dishonest PSBTs. Browser tests use real Nostr signatures and NIP-44 encryption with simulated relay sockets. If Node dependencies live elsewhere, set `LNBITS_PACKAGE` to that checkout's absolute `package.json` path.
@@ -128,3 +157,19 @@ directory. The mobile app and LNbits are independent sibling repositories at
 `../mobile/` and `../lnbits/`. Firmware builds do not require either checkout;
 optional LNbits interoperability tests use the sibling LNbits checkout.
 The full pre-split history is retained; mobile has its own extracted history.
+
+### Source map
+
+| Path | Purpose |
+| --- | --- |
+| `src/main.cpp` | Touchscreen screens and user actions |
+| `src/engine.cpp` | Settings, relay transport, PIN handling and signing lifecycle |
+| `src/wallet.h` | Wallet vault and key handling |
+| `src/validation.h`, `src/signing.h` | Bitcoin transaction validation and signing |
+| `src/approval_policy.h`, `src/pin_attempts.h` | Approval limits and persistent retry policy |
+| `scripts/` | Build support, safe upload and native test utilities |
+| `tests/` | Native and client interoperability checks |
+| `docs/protocol.md` | Version 1 wire contract |
+
+See the [delivery specification](docs/mobile-signer-spec.md) for the complete
+client/device flow and [verification record](docs/verification.md) for test scope.
