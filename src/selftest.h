@@ -1,4 +1,5 @@
 #pragma once
+#include "device_settings.h"
 #include "nip44/nip44.h"
 #include "wallet.h"
 inline void firmwareSelfTest() {
@@ -35,6 +36,16 @@ inline void firmwareSelfTest() {
     auto blob = seal(test, pin);
     Serial.println("SELFTEST: opening vault");
     require(unseal(blob, pin) == test, "Vault roundtrip failed");
+    Serial.println("SELFTEST: checking independent settings PIN protection");
+    require(!pinValid("12345") && pinValid("123456") && !pinValid("12345a"),
+            "Settings PIN length/digits failed");
+    bool wrongDomain = false;
+    try {
+        DeviceSettings::verifyPinBlob(blob, pin);
+    } catch (...) {
+        wrongDomain = true;
+    }
+    require(wrongDomain, "Wallet data accepted as settings credential");
     Serial.println("SELFTEST: checking wrong PIN");
     bool wrong = false;
     try {

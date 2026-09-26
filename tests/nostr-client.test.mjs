@@ -247,3 +247,17 @@ test('ephemeral requests are retried unchanged until a recovered device responds
     assert.equal(c.sockets[0].sent.length, count + 1)
   } finally { c.close() }
 })
+
+test('automatic approval status is authenticated progress and never completes signing itself', async () => {
+  const c = setup(), statuses = []
+  c.onStatus = value => statuses.push(value)
+  try {
+    const signed = c.request('sign_psbt', {}, 'a'.repeat(64))
+    const original = body(c)
+    await c.receive(response(c, {...original, status: 'Automatically approved', sequence: 5}))
+    assert.deepEqual(statuses, ['Automatically approved'])
+    assert.equal(c.pending.size, 1)
+    await c.receive(response(c, {...original, result: {psbt: 'signed'}}))
+    assert.deepEqual(await signed, {psbt: 'signed'})
+  } finally { c.close() }
+})

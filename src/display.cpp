@@ -166,6 +166,7 @@ namespace Display {
         lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
         
         if (indev) {
+            lv_timer_set_period(indev->driver->read_timer, 10);
             Serial.println("LVGL input device registered successfully");
             Serial.printf("Input device pointer: %p\n", indev);
             

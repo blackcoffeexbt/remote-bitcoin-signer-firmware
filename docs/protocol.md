@@ -30,7 +30,7 @@ Methods:
 | --- | --- | --- |
 | `pair` | `token`, printable `label` (1–40 characters) | Public account after local approval |
 | `get_account` | Empty object; paired clients only | `descriptor`, `xpub`, `fingerprint`, `path`, `session` |
-| `sign_psbt` | `session`, base64 `psbt`; paired clients only | Progress events, then `{ "psbt": "signed PSBT base64" }` after remote PIN unlock and local approval |
+| `sign_psbt` | `session`, base64 `psbt`; paired clients only | Progress events, then `{ "psbt": "signed PSBT base64" }` after remote PIN unlock and local or policy approval |
 | `unlock` | `session`, `request_id` of active signing request, `pin` (6–32 digits); same paired client and `psbt_hash` as signing request | `{}` after successful unlock and validation; errors terminate the signing request except unmatched requests or cooldown refusals |
 
 For pair/account requests, `psbt_hash` is an empty string. The device session changes on reboot and remains stable across wallet locks/unlocks. Clients retrieve it automatically before each signing request. Public account retrieval works while the wallet is locked. It is a freshness challenge, not a secret.
@@ -41,7 +41,7 @@ The device's QR contains JSON with `protocol`, `version`, `pubkey`, `token` (16 
 
 Signing first emits `Ready to sign` (sequence 1), then `PIN required` (2). The client keeps the original signing promise pending and shows PIN entry only after the authenticated status arrives. The `unlock` request has its own unique ID and binds `params.request_id`, `params.session`, sender and `psbt_hash` to the active signing request. Its deadline cannot extend the original signing deadline. Duplicate unlock deliveries never repeat decryption. Failed unlocks use the same exponential cooldown as local unlocks.
 
-Further statuses are `Decrypting wallet` (3), `Validating transaction` (4), `Ready to sign — approve on device` (5), `Signing` (6), and `Signing complete` (7). Status messages carry the original signing response binding fields plus `status` and integer `sequence`, without `result` or `error`. Clients ignore duplicate/older sequences and do not reset the deadline. Only the final `result` settles signing successfully. All statuses are signed and encrypted like other responses. The latest status replaces the previous cached reply for that request; the final result replaces the status.
+Further statuses are `Decrypting wallet` (3), `Validating transaction` (4), `Ready to sign — approve on device` (5) or `Automatically approved` (5), `Signing` (6), and `Signing complete` (7). Status messages carry the original signing response binding fields plus `status` and integer `sequence`, without `result` or `error`. Clients ignore duplicate/older sequences and do not reset the deadline. Only the final `result` settles signing successfully. All statuses are signed and encrypted like other responses. The latest status replaces the previous cached reply for that request; the final result replaces the status.
 
 ## Response
 
@@ -57,6 +57,10 @@ See README for wallet/PSBT limits. Relay WebSocket frames are bounded to 100,000
 
 LNbits' `CreatePsbt` accepts an optional `include_non_witness_utxo` boolean (default `false`). The Nostr integration sets it to `true`; existing hardware signers retain their compact PSBT behavior.
 
-## Future policy rules
+## Settings authentication and approval policy
 
-`BitcoinPolicy::validate` produces trusted transaction details independently of transport and UI. A future policy evaluator belongs between validation and approval. Persist daily allowance reservations before releasing signatures; count signed approvals rather than trusting a client-reported broadcast result. Define trusted time, crash recovery, replacement transactions and reconciliation before enabling unattended policies. No unattended policy mode exists in v1.
+Settings are local-only and protected by a separate settings PIN (6–32 digits), using an independently salted credential stored outside the wallet vault. Settings authentication never decrypts Bitcoin keys. Existing devices without a settings credential require one local wallet-PIN verification before creating it. New devices set the settings PIN during initial setup. Pairing, revocation, network changes and policy changes require settings authentication; signing requests cannot interrupt an open Settings session.
+
+After wallet PIN unlock and full PSBT validation, compute debit as recipient outputs plus the fee, excluding verified change. Automatic approval requires both nonzero configured limits, debit strictly below the per-transaction threshold, and today's reserved total plus debit no greater than the daily limit. Other transactions require touchscreen review and approval. All requests still require the wallet PIN and all terminal signing paths clear Bitcoin keys.
+
+The global UTC-day counter includes both automatic and manual approvals. Persist the reservation atomically with the limits and day in NVS before producing a signature. Never refund on a timeout, crash, signing error, or failed result delivery. Reload this record on reboot; limit edits retain the counter. A new UTC day starts a new counter, using the synchronized device clock; a day earlier than the stored day is rejected for accounting. Invalid records and failed saves stop signing. The same request's replay handling prevents duplicate reservations; a new request, replacement or retry is counted separately. Broadcast confirmations are not used for accounting.

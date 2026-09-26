@@ -1,4 +1,5 @@
 #include "engine.h"
+#include "device_settings.h"
 #ifdef BITCOIN_SELF_TEST
 #include "selftest.h"
 #endif
@@ -27,11 +28,24 @@ static std::vector<std::unique_ptr<WebSocketsClient>> sockets;
 static std::map<String, String> clients;
 static unsigned long unlockAfter = 0;
 static unsigned failures = 0;
+static bool settingsOpen = false, settingsAuthorized = false, migrationAuthorized = false;
+static uint32_t settingsUntil = 0, settingsRetryAfter = 0;
+static unsigned settingsFailures = 0;
+static ApprovalPolicy::State policy;
+static void requireSettings() {
+    require(settingsAuthorized && (int32_t)(settingsUntil - millis()) > 0,
+            "Enter the settings PIN first");
+    settingsUntil = millis() + 600000;
+}
+static void closeSettings() {
+    settingsOpen = settingsAuthorized = migrationAuthorized = false;
+}
 struct Pending {
     String id, peer, method, hash, label;
     Bytes psbt;
     time_t expiry = 0;
     bool awaitingPin = false;
+    uint64_t spend = 0;
 };
 static Pending pending;
 static NetworkPortal portal;
@@ -133,7 +147,7 @@ static void rejectPending(const char *reason) {
     if (p.method == "sign_psbt")
         account.close();
     reply(p.peer, p.id, p.method, p.hash, "{}", reason, p.expiry);
-    post(p.method == "sign_psbt" ? "locked" : "home", reason);
+    post(p.method == "sign_psbt" ? "locked" : "settings", reason);
 }
 static String outputAddress(const Bytes &b) {
     Script script(b.data(), b.size());
@@ -146,17 +160,51 @@ static void progress(const char *text, unsigned sequence) {
           sequence);
     post("progress", text);
 }
+static void signPending(bool automatic) {
+    const auto p = pending;
+    try {
+        require(p.method == "sign_psbt" && !p.awaitingPin && time(nullptr) < p.expiry,
+                "Request no longer active");
+        if (automatic)
+            require(policy.allows(p.spend, time(nullptr)), "Automatic approval limit changed");
+        // Never refund a reservation: a signature may already have escaped.
+        ApprovalPolicy::commitReservation(policy, p.spend, time(nullptr),
+                                          DeviceSettings::savePolicy);
+        if (automatic)
+            progress("Automatically approved", 5);
+        progress("Signing", 6);
+        const auto signedPsbt = account.sign(p.psbt);
+        account.close();
+        require(time(nullptr) < p.expiry, "Request expired while signing");
+        DynamicJsonDocument d(66000);
+        d["psbt"] = signedPsbt;
+        progress("Signing complete", 7);
+        reply(p.peer, p.id, p.method, p.hash, json(d), "", p.expiry);
+        pending = Pending{};
+        post("locked", "Signing complete");
+    } catch (const std::exception &ex) {
+        account.close();
+        pending = Pending{};
+        post("locked", ex.what());
+        reply(p.peer, p.id, p.method, p.hash, "{}", ex.what(), p.expiry);
+    }
+}
 static void reviewPending() {
     require(time(nullptr) < pending.expiry, "Request expired");
     progress("Validating transaction", 4);
     auto review = account.validate(pending.psbt);
-    String text = "Client: " + pending.label + "\nTESTNET4\n";
+    pending.spend = ApprovalPolicy::debit(review.fee, review.tx.outputs);
+    pending.awaitingPin = false;
+    if (policy.allows(pending.spend, time(nullptr))) {
+        signPending(true);
+        return;
+    }
+    String text = "Manual approval required\nClient: " + pending.label + "\nTESTNET4\n";
     for (auto &out : review.tx.outputs)
         text += "\n" + String(out.change ? "CHANGE" : "RECIPIENT") + "\n" +
                 outputAddress(out.script) + "\n" + String((unsigned long long)out.amount) +
                 " sat\n";
     text += "\nFEE: " + String((unsigned long long)review.fee) + " sat";
-    pending.awaitingPin = false;
     progress("Ready to sign — approve on device", 5);
     post("review", text, "", pending.id);
 }
@@ -276,7 +324,7 @@ static void receive(const uint8_t *payload, size_t length) {
             return;
         }
         if (method == "pair") {
-            require(account.ready(), "Unlock locally to pair a browser");
+            requireSettings();
             require(pairToken.length() && now < pairExpiry &&
                         request["params"]["token"] == pairToken,
                     "Pairing code expired or incorrect");
@@ -295,6 +343,7 @@ static void receive(const uint8_t *payload, size_t length) {
             return;
         }
         require(method == "sign_psbt", "Unsupported method");
+        require(!settingsOpen && !portal.active(), "Device settings open; close Settings first");
         require(BitcoinProtocol::signingSession(request["params"]["session"] | "", session.c_str()),
                 "Device restarted; reconnect first");
         String b64 = request["params"]["psbt"] | "";
@@ -383,13 +432,70 @@ static void unlocked(const String &phrase) {
             "Cannot save relay identity");
     p.end();
     startTransport();
-    post("home", "Unlocked — Testnet4");
 }
 static void command(Message &m) {
-    if (m.type == "generate") {
+    if (m.type == "settings_open") {
+        require(!pending.id.length(), "Finish the active request first");
+        settingsOpen = true;
+        if (!DeviceSettings::hasPin())
+            post(!exists() || migrationAuthorized ? "settings_setup" : "settings_migrate");
+        else if (settingsAuthorized && (int32_t)(settingsUntil - millis()) > 0)
+            post("settings");
+        else
+            post("settings_pin");
+    } else if (m.type == "settings_create") {
+        require(!pending.id.length() && (!exists() || migrationAuthorized),
+                "Verify the existing wallet PIN once before creating a settings PIN");
+        post("progress", "Saving settings PIN... Please wait.");
+        DeviceSettings::setPin(m.text);
+        settingsOpen = settingsAuthorized = true;
+        settingsUntil = millis() + 600000;
+        migrationAuthorized = false;
+        account.close();
+        post("settings", "Settings PIN saved");
+    } else if (m.type == "settings_unlock") {
+        require(!pending.id.length(), "Finish the active request first");
+        require((int32_t)(millis() - settingsRetryAfter) >= 0, "Wait before retrying settings PIN");
+        settingsAuthorized = false;
+        try {
+            post("progress", "Checking settings PIN... Please wait.");
+            DeviceSettings::verifyPin(m.text);
+            settingsOpen = settingsAuthorized = true;
+            settingsUntil = millis() + 600000;
+            settingsFailures = 0;
+            post("settings");
+        } catch (...) {
+            settingsFailures = std::min(settingsFailures + 1, 10U);
+            settingsRetryAfter = millis() + 1000 * (1U << settingsFailures);
+            post("settings_pin", "Wrong settings PIN or damaged settings. Wait before retrying.");
+        }
+    } else if (m.type == "settings_close") {
+        if (pending.method == "pair")
+            rejectPending("Settings closed");
+        portal.stop();
+        closeSettings();
+        pairToken = "";
+        connectRelays();
+        post("home");
+    } else if (m.type == "auto_settings" || m.type == "auto_save") {
+        requireSettings();
+        require(!pending.id.length(), "Finish the active request first");
+        require(policy.valid, "Auto signing record is damaged; automatic signing disabled");
+        if (m.type == "auto_save") {
+            auto updated = policy;
+            updated.under = ApprovalPolicy::sats(m.text.c_str());
+            updated.daily = ApprovalPolicy::sats(m.data.c_str());
+            DeviceSettings::savePolicy(updated); // Changes never reset today's spending.
+            policy = updated;
+        }
+        post("auto_settings", DeviceSettings::policyJson(policy),
+             m.type == "auto_save" ? "Limits saved" : "");
+    } else if (m.type == "generate") {
+        require(DeviceSettings::hasPin(), "Set your settings PIN first");
         require(!exists(), "Wallet already configured");
         post("seed", generate());
     } else if (m.type == "create") {
+        require(DeviceSettings::hasPin(), "Set your settings PIN first");
         require(!exists(), "Wallet already configured");
         post("progress", "Deriving your Bitcoin account...");
         account.open(m.text);
@@ -404,7 +510,11 @@ static void command(Message &m) {
             throw;
         }
         unlocked(m.text);
+        account.close();
+        closeSettings();
+        post("locked", "Wallet saved. Ready for signing requests.");
     } else if (m.type == "unlock") {
+        require(!DeviceSettings::hasPin(), "Use your separate settings PIN");
         require(!pending.id.length(), "Enter the PIN in LNbits for this request");
         require((int32_t)(millis() - unlockAfter) >= 0, "Wait before retrying PIN");
         String phrase, transport;
@@ -414,6 +524,9 @@ static void command(Message &m) {
             secret = transport;
             wipe(transport);
             unlocked(phrase);
+            account.close();
+            migrationAuthorized = true;
+            post("settings_setup");
             failures = 0;
             wipe(phrase);
         } catch (...) {
@@ -426,13 +539,15 @@ static void command(Message &m) {
         }
     } else if (m.type == "lock") {
         portal.stop();
+        closeSettings();
         if (pending.id.length())
             rejectPending("Device locked");
         account.close();
         pairToken = "";
         post("locked", "Ready for signing requests from LNbits");
     } else if (m.type == "pair_code") {
-        require(account.ready(), "Unlock first");
+        requireSettings();
+        require(secret.length() && savedAccount.length(), "Create a wallet first");
         require(urls.size() > 0, "Configure a relay first");
         require(time(nullptr) >= 1700000000, "Waiting for network time; check Wi-Fi");
         pairToken = randomHex();
@@ -450,9 +565,14 @@ static void command(Message &m) {
         require(pending.id.length() && m.id == pending.id, "Request no longer active");
         require(time(nullptr) < pending.expiry, "Request expired");
         require(!pending.awaitingPin, "Enter PIN in LNbits first");
+        if (pending.method == "sign_psbt") {
+            signPending(false);
+            return;
+        }
         auto p = pending;
         try {
             if (p.method == "pair") {
+                requireSettings();
                 post("progress", "Saving browser pairing...");
                 clients[p.peer] = p.label;
                 try {
@@ -464,46 +584,34 @@ static void command(Message &m) {
                 pairToken = "";
                 post("progress", "Sending public account to paired browser...");
                 reply(p.peer, p.id, p.method, "", publicAccount(), "", p.expiry);
-            } else {
-                progress("Signing", 6);
-                auto signedPsbt = account.sign(p.psbt);
-                account.close(); // Release and zero Bitcoin keys before publishing any result.
-                require(time(nullptr) < p.expiry, "Request expired while signing");
-                DynamicJsonDocument d(66000);
-                d["psbt"] = signedPsbt;
-                progress("Signing complete", 7);
-                reply(p.peer, p.id, p.method, p.hash, json(d), "", p.expiry);
             }
             pending = Pending{};
-            if (p.method == "sign_psbt") {
-                account.close();
-                post("locked", "Signing complete");
-            } else
-                post("home", "Approved");
+            post("settings", "Browser paired");
         } catch (const std::exception &ex) {
             pending = Pending{};
             if (p.method == "sign_psbt")
                 account.close();
             reply(p.peer, p.id, p.method, p.hash, "{}", ex.what(), p.expiry);
-            post(p.method == "sign_psbt" ? "locked" : "home", ex.what());
+            post(p.method == "sign_psbt" ? "locked" : "settings", ex.what());
         }
     } else if (m.type == "reject") {
         if (m.id == pending.id)
             rejectPending("User rejected");
     } else if (m.type == "clients") {
+        requireSettings();
         String s;
         for (auto &c : clients)
             s += c.first + " " + c.second + "\n";
         post("clients", s);
     } else if (m.type == "revoke") {
-        require(account.ready(), "Unlock first");
+        requireSettings();
         if (pending.peer == m.text)
             rejectPending("Pairing revoked");
         clients.erase(m.text);
         saveClients();
-        post("home", "Pairing revoked");
+        post("settings", "Pairing revoked");
     } else if (m.type == "network_setup") {
-        require(!exists() || account.ready(), "Unlock first");
+        requireSettings();
         require(!pending.id.length(), "Finish the active request first");
         connectingNetwork = false;
         sockets.clear();
@@ -511,9 +619,9 @@ static void command(Message &m) {
     } else if (m.type == "network_cancel") {
         portal.stop();
         connectRelays();
-        post("home", "Network setup closed");
+        post("settings", "Network setup closed");
     } else if (m.type == "network") {
-        require(!exists() || account.ready(), "Unlock first");
+        requireSettings();
         const auto config = parseNetworkConfig(m.text);
         Preferences p;
         p.begin("btc-signer", false);
@@ -528,7 +636,7 @@ static void command(Message &m) {
         connectRelays();
         connectingNetwork = true;
         networkStarted = millis();
-        post("home", "Settings saved. Connecting to Wi-Fi...");
+        post("settings", "Settings saved. Connecting to Wi-Fi...");
     }
 }
 static void run(void *) {
@@ -543,6 +651,7 @@ static void run(void *) {
     }
 #endif
     Serial.println("Bitcoin signer worker ready");
+    policy = DeviceSettings::loadPolicy();
     Preferences p;
     p.begin("btc-signer", true);
     String net = p.getString("network", ""), saved = p.getString("clients", "{}");
@@ -568,10 +677,11 @@ static void run(void *) {
         configTime(0, 0, "pool.ntp.org", "time.google.com");
     }
     connectRelays();
-    post(exists() ? "locked" : "welcome",
-         exists() ? (secret.length() ? "Ready for signing requests from LNbits"
-                                     : "Unlock locally once to enable remote PIN signing")
-                  : "Create or restore a Testnet4 wallet");
+    if (!exists() && !DeviceSettings::hasPin()) {
+        settingsOpen = true;
+        post("settings_setup");
+    } else
+        post(exists() ? "locked" : "welcome", "Ready for signing requests from LNbits");
     for (;;) {
         Message *m = nullptr;
         if (xQueueReceive(commands, &m, 0) == pdTRUE) {
@@ -584,6 +694,15 @@ static void run(void *) {
             wipe(m->data);
             delete m;
         }
+        if (settingsAuthorized && (int32_t)(millis() - settingsUntil) >= 0) {
+            portal.stop();
+            closeSettings();
+            pairToken = "";
+            connectRelays();
+            if (pending.method == "pair")
+                rejectPending("Settings session expired");
+            post("home", "Settings session expired");
+        }
         if (portal.active()) {
             portal.poll();
             String settings = portal.takeSubmission();
@@ -595,13 +714,13 @@ static void run(void *) {
                 } catch (const std::exception &ex) {
                     portal.stop();
                     connectRelays();
-                    post("home", String("Network setup failed: ") + ex.what());
+                    post("settings", String("Network setup failed: ") + ex.what());
                 }
                 wipe(apply.text);
             } else if (portal.expired()) {
                 portal.stop();
                 connectRelays();
-                post("home", "Network setup expired. Open Network settings to try again.");
+                post("settings", "Network setup expired. Open Network settings to try again.");
             }
         }
         if (!portal.active() && hasNetwork) {

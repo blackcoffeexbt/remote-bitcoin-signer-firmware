@@ -57,6 +57,26 @@ int main() {
     assert(wrap.update(true, 0, 0, UINT32_MAX - 30));
     assert(wrap.update(true, 0, 0, 10));
     assert(!wrap.update(true, 0, 0, 60));
+    // Explicit lifts make consecutive taps responsive (20 ms vs the old 90 ms).
+    Keypad fast;
+    assert(fast.sample(true, 1, 0, 2000));
+    assert(fast.sample(true, 1, 1, 2020));
+    assert(!fast.sample(true, 0, 0, 2040));
+    assert(fast.sample(true, 1, 0, 2050));
+    assert(fast.sample(true, 1, 1, 2070));
+    assert(!fast.sample(true, 0, 0, 2090));
+    assert(fast.characters == 2);
+    // If the initial press packet was missed, a new contact after idle still works.
+    assert(fast.sample(true, 1, 2, 2200));
+    assert(fast.touch.hasPosition());
+    assert(fast.sample(true, 1, 1, 2230));
+    assert(!fast.sample(true, 0, 0, 2250));
+    assert(fast.characters == 3);
+    for (uint32_t now = 2260; now < 2500; now += 10)
+        assert(!fast.sample(true, 1, 2, now)); // Continuous stale tails cannot re-arm.
+    assert(fast.characters == 3);
+    assert(fast.sample(true, 1, 2, 2600)); // A quiet interval permits a real new contact.
+
     // Unsupported multi-touch does not start a press.
     assert(!wrap.update(true, 2, 0, 100));
     assert(!wrap.update(true, 1, 3, 130));

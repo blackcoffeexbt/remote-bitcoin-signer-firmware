@@ -11,7 +11,7 @@ lv_obj_t *input1 = nullptr, *input2 = nullptr, *input3 = nullptr;
 String phrase, requestId;
 unsigned backupWord = 1;
 String backupChoices[4];
-bool unlocked = false, configured = false;
+bool configured = false;
 void home(const String &text = "");
 void label(const String &text) {
     auto obj = lv_label_create(page);
@@ -50,9 +50,10 @@ void button(const char *name, lv_event_cb_t callback) {
     lv_obj_add_event_cb(b, callback, LV_EVENT_CLICKED, nullptr);
 }
 static const char *pinKeys[] = {
-    "1", "2",          "3", "\n", "4", "5", "6", "\n", "7", "8", "9", "\n", LV_SYMBOL_BACKSPACE,
-    "0", LV_SYMBOL_OK, ""};
-static const lv_btnmatrix_ctrl_t pinControls[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    "1", "2", "3", "\n", "4", "5", "6", "\n", "7", "8", "9", "\n", LV_SYMBOL_BACKSPACE,
+    "0", " ", ""};
+static const lv_btnmatrix_ctrl_t pinControls[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 | LV_BTNMATRIX_CTRL_HIDDEN | LV_BTNMATRIX_CTRL_DISABLED};
 lv_obj_t *input(const char *hint, bool secret = false, bool multiline = false, bool pin = false) {
     auto t = lv_textarea_create(page);
     lv_obj_set_width(t, 280);
@@ -82,6 +83,10 @@ lv_obj_t *input(const char *hint, bool secret = false, bool multiline = false, b
                         }
                         if (lv_event_get_code(event) != LV_EVENT_READY &&
                             lv_event_get_code(event) != LV_EVENT_CANCEL)
+                            return;
+                        // Numeric entry stays open until a page action. A drifting release
+                        // must never activate Done and dismiss the keypad mid-PIN.
+                        if (lv_keyboard_get_mode(keyboard) == LV_KEYBOARD_MODE_NUMBER)
                             return;
                         lv_obj_del(keyboard);
                         keyboard = nullptr;
@@ -117,6 +122,8 @@ bool send(const String &type, const String &text = "", const String &data = "",
         if (lv_obj_check_type(child, &lv_btn_class))
             lv_obj_add_state(child, LV_STATE_DISABLED);
     }
+    if (keyboard)
+        lv_obj_add_state(keyboard, LV_STATE_DISABLED);
     if (type == "generate")
         status("Generating your recovery phrase...");
     else if (type == "create")
@@ -142,10 +149,10 @@ bool send(const String &type, const String &text = "", const String &data = "",
     return true;
 }
 void pinSetup() {
-    screen("Choose PIN");
+    screen("Choose wallet PIN");
     label("6-32 digits. Needed for each signing request. Back up the recovery phrase before "
           "continuing.");
-    input1 = input("PIN", true, false, true);
+    input1 = input("Wallet decryption PIN", true, false, true);
     input2 = input("Confirm PIN", true, false, true);
     button("Save wallet", [](lv_event_t *) {
         String pin = value(input1);
@@ -214,25 +221,96 @@ void verifySeed(unsigned word = 1) {
             LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
     }
 }
-void network() {
-    send("network_setup");
+void settingsMenu(const String &text = "") {
+    screen("Settings");
+    if (text.length())
+        label(text);
+    button("Network settings", [](lv_event_t *) { send("network_setup"); });
+    button("Auto Signing Settings", [](lv_event_t *) { send("auto_settings"); });
+    if (Wallet::exists()) {
+        button("Pair a browser", [](lv_event_t *) { send("pair_code"); });
+        button("Paired browsers", [](lv_event_t *) { send("clients"); });
+    }
+    button(Wallet::exists() ? "Close Settings" : "Continue wallet setup",
+           [](lv_event_t *) { send("settings_close"); });
 }
-void lockScreen(const String &text) {
-    unlocked = false;
-    screen("Bitcoin signer - locked");
-    label(text);
-    label("Connects to Wi-Fi and relays automatically. Start signing in LNbits to enter your PIN.");
-    button("Unlock settings", [](lv_event_t *) {
-        screen("Unlock device settings");
-        input1 = input("PIN", true, false, true);
-        button("Unlock", [](lv_event_t *) {
+void settingsPin(bool create, bool migration = false, const String &text = "") {
+    screen(create      ? "Choose settings PIN"
+           : migration ? "Existing device upgrade"
+                       : "Unlock Settings");
+    label(
+        create ? "Choose a separate settings PIN, 6-32 digits. This does not decrypt your wallet."
+        : migration
+            ? "Enter the existing wallet PIN once to authorize creating your separate settings PIN."
+            : "Enter your settings PIN, not your wallet decryption PIN.");
+    if (text.length())
+        label(text);
+    input1 = input(create      ? "New settings PIN"
+                   : migration ? "Wallet PIN (one time)"
+                               : "Settings PIN",
+                   true, false, true);
+    if (create) {
+        input2 = input("Confirm settings PIN", true, false, true);
+        button("Save settings PIN", [](lv_event_t *) {
+            String pin = value(input1), confirmation = value(input2);
+            bool valid = Wallet::pinValid(pin) && pin == confirmation;
+            Wallet::wipe(confirmation);
+            if (!valid) {
+                Wallet::wipe(pin);
+                status("Use matching PINs of 6-32 digits");
+                return;
+            }
+            send("settings_create", pin);
+            Wallet::wipe(pin);
+            lv_textarea_set_text(input1, "");
+            lv_textarea_set_text(input2, "");
+        });
+    } else if (migration) {
+        button("Verify existing wallet PIN", [](lv_event_t *) {
             String pin = value(input1);
             send("unlock", pin);
             Wallet::wipe(pin);
             lv_textarea_set_text(input1, "");
         });
-        button("Back", [](lv_event_t *) { home(); });
-    });
+    } else {
+        button("Unlock Settings", [](lv_event_t *) {
+            String pin = value(input1);
+            send("settings_unlock", pin);
+            Wallet::wipe(pin);
+            lv_textarea_set_text(input1, "");
+        });
+    }
+    if (!create || Wallet::exists())
+        button("Cancel", [](lv_event_t *) { send("settings_close"); });
+}
+void autoSettings(const String &text, const String &message) {
+    DynamicJsonDocument d(512);
+    deserializeJson(d, text);
+    screen("Auto Signing Settings");
+    label("Wallet PIN is always required. Below both limits, touchscreen approval is skipped. 0 "
+          "disables it.");
+    label("Approve transactions under (sats)");
+    input1 = input("Amount in sats", false, false, true);
+    lv_textarea_set_max_length(input1, 16);
+    lv_textarea_set_text(input1, String(d["under"].as<unsigned long long>()).c_str());
+    label("Total allowed per UTC day (sats)");
+    input2 = input("Daily allowance in sats", false, false, true);
+    lv_textarea_set_max_length(input2, 16);
+    lv_textarea_set_text(input2, String(d["daily"].as<unsigned long long>()).c_str());
+    label("Counts recipients plus fees, excluding change. Above either limit: review and approve "
+          "on screen.");
+    if (message.length())
+        label(message);
+    button("Save limits", [](lv_event_t *) { send("auto_save", value(input1), value(input2)); });
+    button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
+}
+void lockScreen(const String &text) {
+    screen("Bitcoin signer - locked");
+    if (text.length())
+        label(text);
+    label("Connects to Wi-Fi and relays automatically. Start signing in LNbits to enter your "
+          "wallet PIN.");
+    button("Settings", [](lv_event_t *) { send("settings_open"); });
 }
 void welcome() {
     screen("Testnet4 Bitcoin signer");
@@ -262,48 +340,48 @@ void welcome() {
             welcome();
         });
     });
-    button("Network settings", [](lv_event_t *) { network(); });
+    button("Settings", [](lv_event_t *) { send("settings_open"); });
 }
 void home(const String &text) {
-    if (!unlocked) {
-        if (configured)
-            lockScreen(text);
-        else {
-            welcome();
-            if (text.length())
-                status(text);
-        }
-        return;
+    configured = Wallet::exists();
+    if (configured)
+        lockScreen(text);
+    else {
+        welcome();
+        if (text.length())
+            status(text);
     }
-    screen("Bitcoin signer - Testnet4");
-    label(text);
-    label(WiFi.status() == WL_CONNECTED ? "Wi-Fi connected" : "Wi-Fi disconnected");
-    button("Pair a browser", [](lv_event_t *) { send("pair_code"); });
-    button("Paired browsers", [](lv_event_t *) { send("clients"); });
-    button("Network settings", [](lv_event_t *) { network(); });
-    button("Lock", [](lv_event_t *) { send("lock"); });
 }
 void handle(Engine::Message &m) {
-    if (m.type == "progress") {
+    if (m.type == "progress" || m.type == "status") {
         status(m.text);
         return; // Keep controls disabled until the worker finishes the command.
     }
+    if (keyboard)
+        lv_obj_clear_state(keyboard, LV_STATE_DISABLED);
     for (uint32_t i = 0; i < lv_obj_get_child_cnt(page); i++) {
         auto child = lv_obj_get_child(page, i);
         if (lv_obj_check_type(child, &lv_btn_class))
             lv_obj_clear_state(child, LV_STATE_DISABLED);
     }
-    if (m.type == "welcome") {
+    if (m.type == "settings") {
+        settingsMenu(m.text);
+    } else if (m.type == "settings_setup") {
+        settingsPin(true);
+    } else if (m.type == "settings_pin" || m.type == "settings_migrate") {
+        settingsPin(false, m.type == "settings_migrate", m.text);
+    } else if (m.type == "auto_settings") {
+        autoSettings(m.text, m.data);
+    } else if (m.type == "welcome") {
         configured = false;
         welcome();
     } else if (m.type == "locked") {
         configured = true;
         lockScreen(m.text);
     } else if (m.type == "pin_required") {
-        unlocked = false;
         requestId = m.id;
         screen("PIN required in LNbits");
-        label("Enter your PIN in the paired LNbits client to unlock this signing request.");
+        label("Enter your PIN in the paired LNbits wallet to unlock this signing request.");
         button("Reject", [](lv_event_t *) { send("reject", "", "", requestId); });
     } else if (m.type == "network_setup") {
         DynamicJsonDocument details(512);
@@ -322,7 +400,6 @@ void handle(Engine::Message &m) {
         Wallet::wipe(wifiCode);
     } else if (m.type == "home") {
         configured = Wallet::exists();
-        unlocked = configured && (unlocked || m.text.startsWith("Unlocked"));
         home(m.text);
     } else if (m.type == "error" || m.type == "status")
         status(m.text);
@@ -344,7 +421,7 @@ void handle(Engine::Message &m) {
         auto qr = lv_qrcode_create(page, 280, lv_color_black(), lv_color_white());
         lv_qrcode_update(qr, m.text.c_str(), m.text.length());
         label(m.text);
-        button("Back", [](lv_event_t *) { home(); });
+        button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
     } else if (m.type == "pair" || m.type == "review") {
         requestId = m.id;
         screen(m.type == "pair" ? "Authorize browser?" : "Review transaction");
@@ -383,7 +460,7 @@ void handle(Engine::Message &m) {
                 },
                 LV_EVENT_ALL, key);
         }
-        button("Back", [](lv_event_t *) { home(); });
+        button("Back to Settings", [](lv_event_t *) { send("settings_open"); });
     }
 }
 } // namespace

@@ -46,7 +46,7 @@ Successful browser pairing now retrieves and imports the public account automati
 
 ## Boundaries
 
-No mainnet, multisig, Taproot input, unattended signing, server-side background delivery or spending rules are supported. The prototype makes no claim of secure-element or physical-extraction protection. Keep recovery phrases on the device. Enter the PIN only in the paired client’s requested PIN field or local settings unlock; never paste it into logs, pairing fields or chat.
+No mainnet, multisig, Taproot input, wallet-PIN-free signing or server-side background delivery is supported. Optional touchscreen auto approval uses the transaction and daily limits below. The prototype makes no claim of secure-element or physical-extraction protection. Keep recovery phrases on the device. Enter the PIN only in the paired client’s requested PIN field or local settings unlock; never paste it into logs, pairing fields or chat.
 
 
 ## Remote PIN signing and reconnection update (26 September)
@@ -56,3 +56,16 @@ Firmware now connects while the Bitcoin wallet is locked, retries Wi-Fi, and reb
 Automated verification: normal and self-test firmware builds; sanitizer protocol tests for PIN ownership, request/hash/session binding, expiry and Wi-Fi retry timing/wraparound; 12 real-cryptography transport tests (including retries through ephemeral relays); 9 pairing/signing component tests; four independent libwally validation/signing groups; and all 96 existing LNbits onchain UI tests. The hardware self-test additionally checks that a closed wallet rejects validation.
 
 This update has not been flashed. Actual Wi-Fi loss/recovery, remote PIN entry, hardware memory cleanup and device-backed signing still require physical verification. Earlier hardware results above apply to the previous firmware, not this update.
+
+
+## Separate settings PIN, touch responsiveness and automatic approval
+
+Settings now owns Network settings, pairing/revocation and Auto Signing Settings. A separately salted 6–32 digit settings credential is created during setup; existing devices first verify their wallet PIN once to authorize migration. Settings access uses no Bitcoin decryption and expires on close or after ten minutes without a settings command.
+
+Touch polling is 10 ms. Confirmed lifts use a 20 ms release filter; ambiguous empty packets retain a 70 ms filter. Short stale contact tails cannot re-arm a key, while a new contact after a quiet interval can recover a missed initial press packet. Numeric keypads have no Done/dismiss key and remain open through PIN entry. Background status messages do not reset input controls, and incoming signing requests cannot replace open settings screens.
+
+Native sanitizer checks cover rapid repeated taps, held-finger bounce, stale tails, missed press packets, read failures and timer wraparound. Policy checks cover recipients-plus-fees excluding change, strict transaction thresholds, exact daily limits, disabled limits, reboot state, UTC rollover, clock rollback, manual reservations, storage failure before signing, overflow and malformed amounts. The hardware self-test additionally rejects wallet-domain encrypted data as a settings credential.
+
+The client accepts authenticated automatic-approval progress without treating it as a final signature. The earlier automatic-connection regression test exercises Sign with device after a page reload with a saved pairing and no wallet metadata flag.
+
+This update is built and automatically tested only; physical touch responsiveness, settings migration, NVS power-loss behavior and device-backed automatic/manual signing need hardware verification. No firmware upload was performed.
