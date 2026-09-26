@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Remote Signer Demo",
+    "slug": "remote-bitcoin-signer",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "pw.sats.remotebitcoinsigner"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "pw.sats.remotebitcoinsigner",
+      "allowBackup": false
+    },
+    "scheme": "remote-bitcoin-signer",
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "plugins": [
+      "./plugins/withDeviceScheme"
+    ]
+  }
+}
