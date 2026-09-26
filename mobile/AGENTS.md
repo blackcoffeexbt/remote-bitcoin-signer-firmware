@@ -1,7 +1,8 @@
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
 Read [the repository mobile specification](../docs/mobile-signer-spec.md) and
-[root guidance](../AGENTS.md). This is Phase 0: keep simulation visibly labelled.
+[root guidance](../AGENTS.md). This is the live remote client for the ESP32. Never add phone Bitcoin custody
+or pretend the phone can approve/lock/revoke the device via v1.
 The user requested local Android Studio/Xcode builds; prefer the commands in
 [README.md](README.md) over cloud builds. The current UI is a single screen;
 apply the routing guidance below when adding multi-screen navigation.

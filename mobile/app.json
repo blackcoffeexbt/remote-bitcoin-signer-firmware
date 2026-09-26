@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Remote Signer Demo",
+    "name": "Remote Signer Client",
     "slug": "remote-bitcoin-signer",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -19,7 +19,8 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "pw.sats.remotebitcoinsigner",
-      "allowBackup": false
+      "allowBackup": false,
+      "versionCode": 2
     },
     "scheme": "remote-bitcoin-signer",
     "platforms": [
@@ -27,7 +28,17 @@
       "ios"
     ],
     "plugins": [
-      "./plugins/withDeviceScheme"
+      "./plugins/withDeviceScheme",
+      "./plugins/withActivityLintWorkaround",
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the pairing QR displayed by your ESP32 signer.",
+          "recordAudioAndroid": false
+        }
+      ]
     ]
   }
 }

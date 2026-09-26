@@ -1,158 +1,116 @@
-# Remote Signer mobile
+# Remote Signer mobile client
 
-React Native + TypeScript, using Expo SDK 57. Android and iOS share the same
-application. **Phase 0 is an interactive simulation, not a working Bitcoin
-signer.** No keys, seeds or PINs are collected, stored or transmitted. No Nostr
-connection, PSBT validation/signing or broadcast is implemented yet.
+This app controls the existing ESP32 Bitcoin signer over Nostr, in the same
+protocol role as the LNbits browser. **Bitcoin keys and approval stay on the
+ESP32.** The old phone-as-signer simulation was incorrect and has been removed.
 
-Read the [current-flow specification and phased plan](../docs/mobile-signer-spec.md).
-The working product direction is a phone replacing the ESP32 signer, with
-LNbits remaining the payment builder and broadcaster.
+## Working client flow
 
-## Run on your devices
+1. On ESP32 open **Settings → Pair a browser**. In the phone app scan its QR or
+   paste the pairing JSON, name this client, and choose **Request pairing**.
+   Compare the phone's full Nostr public key on ESP32 and approve there.
+2. The app retrieves the public account. Its independent Nostr transport identity
+   and connection are saved in OS-backed secure storage. Reopen the app and use
+   **Reconnect / refresh account** to retrieve the device's current account.
+3. Prepare a Testnet4 payment in LNbits with full previous transactions included
+   (`include_non_witness_utxo=true`). Export the unsigned PSBT. Paste its base64
+   or use **Import PSBT file** (binary `.psbt` or base64 text).
+4. **Review transaction** displays full recipients, verified own outputs,
+   amounts, fee and wallet debit. **Request signature from ESP32** refreshes
+   the boot session and sends the encrypted signing request.
+5. Enter the ESP32 **wallet PIN** only when the authenticated device status
+   requests it. The PIN is encrypted to the device with the original request
+   ID/hash/session binding. It is not sent to LNbits or stored on the phone.
+6. Review/approve on ESP32, unless its existing auto-approval policy applies.
+   The phone follows authenticated progress and verifies the returned unsigned
+   transaction and every Bitcoin signature against the original PSBT data.
+7. **Copy signed PSBT** or **Share signed PSBT file**, return it to LNbits, and
+   explicitly finalize/broadcast there. The phone does not broadcast.
 
-Prerequisites: Node 22.13+ (Node 22 LTS recommended), npm, Xcode with its command
-line tools and an iOS simulator runtime, Android Studio with Android SDK 36,
-and a compatible Java toolchain. SDK 57 supports iOS 16.4+ / Android 7+ and
-requires Xcode 26.4+; see [Expo's version matrix](https://docs.expo.dev/versions/v57.0.0/).
-Xcode 26.6 was detected on the development machine.
+The current MVP imports prepared PSBTs. It does not yet reproduce LNbits'
+balances, coin selection, transaction builder or broadcast UI. The displayed
+index-0 receive address is a reference, not a fresh-address allocator.
 
-From this repository:
+**Stop waiting / disconnect is local only.** Firmware v1 has no remote cancel,
+lock, approve, policy-edit or revoke method. A pending request may still complete
+on the ESP32; inspect device/LNbits state before retrying. Backgrounding clears
+PIN/pairing text, closes sockets and stops waiting. Forgetting the phone's local
+connection does not revoke its old key on ESP32: use Settings → Paired browsers.
+
+## Build and run
+
+Node 22.13+, npm, Android Studio / SDK 36 / Java 21, and Xcode 26.4+ for iOS.
+The project uses Expo SDK 57 and development builds. Native dependencies changed
+for the real client, so reinstalling the earlier demo APK is not sufficient.
 
 ```sh
 cd mobile
 npm ci
-```
-
-For an Android phone, enable Developer options and USB debugging, connect it
-and accept the computer's debugging authorization, then:
-
-```sh
+npx expo prebuild
 npm run android:device
-```
-
-For an iPhone, connect and trust the Mac, enable Developer Mode, then:
-
-```sh
+# or, on the Mac with an iPhone connected:
 npm run ios:device
 ```
 
-Choose the physical device when prompted. iPhone installation requires local
-development signing. Select your Apple development team in Xcode if requested.
-The starter bundle ID is `pw.sats.remotebitcoinsigner`; change both identifiers
-in `app.json` if needed for your signing setup. No App Store/EAS deployment is
-required. These commands generate native projects and build/install a development
-client using your local tools. See [Expo local builds](https://docs.expo.dev/guides/local-app-overview/).
-
-For Android emulator or iOS Simulator:
-
-```sh
-npm run android
-npm run ios
-```
-
-After the first native build, start the JavaScript development server with
-`npm start`. Keep the phone and Mac on the same reachable network and permit
-local-network access when asked. Android over USB can use
-`adb reverse tcp:8081 tcp:8081`. Rebuild the native app when native dependencies
-or native configuration change. This project uses a development client rather
-than relying on the version of Expo Go installed on your devices.
-
-To inspect the generated native projects in your IDEs, run `npm run prebuild`,
-then open `android/` in Android Studio or the generated `.xcworkspace` under
-`ios/` in Xcode. Generated folders are ignored; maintain configuration in
-`app.json`/config plugins. Do not put lasting changes only in generated files.
-
-## Try the current prototype
-
-### Standalone device builds
-
-Build a standalone ARM64 Android APK (includes the JavaScript bundle; no Metro
-server needed):
+For later JavaScript development, `npm start`. Keep the phone and Mac on a
+reachable local network. For standalone ARM64 Android testing:
 
 ```sh
 sh scripts/build-apk.sh
 ```
 
-Output: `artifacts/remote-signer-demo-arm64.apk`. The generated Expo release
-configuration uses the local **debug signing key** for this test APK; it is
-not a store release. Install with Android's package installer or
-`adb install -r artifacts/remote-signer-demo-arm64.apk`.
+The local test APK uses the generated debug certificate, with bundled JavaScript
+and no Metro requirement. It is not store-signed. Android 7+ is supported.
+Generated `android/` and `ios/` directories are ignored; config plugins preserve
+native settings across regeneration.
 
-For iPhone, open `ios/RemoteSignerDemo.xcworkspace`, select the
-**RemoteSignerDemoDevice** scheme, select your connected iPhone, and choose
-your Apple development team under the app target's **Signing & Capabilities**.
-Press Run. This scheme runs Release configuration with bundled JavaScript, so
-the installed demo does not need Metro. The normal **RemoteSignerDemo** scheme
-remains available for development. The device scheme is generated reproducibly
-by `plugins/withDeviceScheme.js`.
+For iPhone, first regenerate with `npx expo prebuild --platform ios` to install
+the new native dependencies, then open the generated `.xcworkspace` under `ios/`.
+The earlier demo workspace is not ready for this client: its obsolete generated
+Pods were removed to free space for the Android build. Select the
+`Device`-suffixed scheme, your iPhone and Apple development team, then Run.
+The device scheme bundles JavaScript in Release configuration.
 
-Native build attempt, 26 September: dependencies required more disk space than
-was available. The Android build was stopped during NDK installation before
-the disk filled; **no APK has been produced yet**. iOS CocoaPods installation
-completed and the workspace was opened in Xcode. iOS native compilation and
-device signing remain unverified. Free at least 10 GB before retrying. No
-Apple team was selected automatically because the available development
-identity was not confirmed for this project.
+`withActivityLintWorkaround.js` limits a release lint exception to MainActivity's
+false `Instantiatable` finding. Its compiled public constructor and full
+ReactActivity/AndroidX chain to android.app.Activity were verified during the
+previous build. All other release checks remain enabled; recheck on upgrades.
 
-### Demo checklist
+## Architecture and checks
 
-1. Choose **Try demo pairing**. Inspect the clearly labelled fixture identity;
-   approve or cancel. There is no actual QR/relay pairing yet.
-2. Choose **Start demo payment**, then **Simulate PIN unlock**. This represents
-   authenticated remote unlock and successful validation; it performs neither.
-3. Inspect the recipient amount (25,000 sats), change (74,500 sats), fee (500
-   sats) and total debit (25,500 sats). Addresses are invalid placeholders.
-4. Approve to reach **Demo complete**, or reject. No PSBT or signature is created.
-5. Repeat, leave the app during review, and return: the request must be cancelled.
-   Also test **Lock and cancel**, a 150-second payment timeout, a three-minute
-   pairing timeout, and **Forget demo browser**.
-
-Demo state is intentionally in memory and resets on process restart. Locking
-retains the demo pairing but cancels the active request. Pairing/authenticated
-protocol input, persistent custody and live transactions belong to Phase 1.
-
-## Implementation map
-
-- `App.tsx`: single-screen interactive demo with native safe areas and lifecycle
-  cancellation; use Expo Router when adding separate navigation screens.
-- `src/demo.ts`: deterministic simulation reducer; request-ID and deadline-bound
-  actions. Its inputs are trusted local fixtures, not untrusted relay messages.
-- `src/protocol.ts`: typed v1 request/response shapes and constants. Runtime
-  validation, NIP-01/NIP-44 crypto and relay delivery remain to be implemented.
-- `tests/demo.test.ts`: meaningful state-transition and stale-action regressions.
-
-Next vertical milestone: native vault/public account → encrypted pairing and
-account import → constrained PSBT review → remote PIN/manual signing → LNbits
-verification and explicit Testnet4 broadcast on both devices. Automatic approval
-and background delivery are deferred; full gates are in the specification.
-
-## Checks
+- `src/client.ts`: signed NIP-01 kind 24134 + NIP-44 v2 client, retry/reconnect,
+  binding/expiry/progress validation, account pinning and PIN submission.
+- `src/bitcoin.ts`: Testnet BIP84 ownership/UTXO review and signed PSBT validation.
+  Returned metadata is discarded; only verified signatures join original maps.
+- `src/storage.ts`: separate secure transport key and connection persistence.
+- `src/random.ts`: native cryptographic randomness before Nostr initialization.
+- `App.tsx`: real pairing, QR/file import, progress/PIN and verified PSBT export.
+- `tests/`: real Nostr and Bitcoin cryptography against fake relay sockets and
+  disposable deterministic Bitcoin fixtures. No firmware or network mock is
+  reachable from the app UI.
 
 ```sh
-npm run typecheck
+npm ci
 npm test
+npm run typecheck
 npm run lint
 npm run export:check
 ```
 
-`export:check` produces Android/iOS JavaScript bundles under ignored `dist/`.
-It does not compile native binaries, install on devices or verify live signing.
-The Node test runner uses its TypeScript stripping flag; an experimental-feature
-warning on Node 22.17 is expected.
+See [the corrected spec](../docs/mobile-signer-spec.md) for the full protocol and
+physical acceptance checklist. A test against simulated relay sockets does not
+prove live ESP32/Android/iPhone interoperability. Camera permission, secure-store
+persistence, background behavior, file sharing, wrong-PIN/cooldown handling and
+one device-backed Testnet4 round trip still require physical-device testing.
 
-Validation on 26 September 2026: clean `npm ci` and Expo dependency compatibility
-check pass; TypeScript and ESLint pass; all eight reducer
-tests pass; Android and iOS Hermes bundles export successfully. No native
-binary was built or installed. The sandboxed simulator inventory check could
-not connect to CoreSimulator, so simulator UI behavior was not verified.
+The existing Expo build-tool audit findings remain separate from runtime checks;
+this client is Testnet4-only and is not represented as production-audited.
 
-Dependency audit reports 10 moderate findings in the Expo build-tool chain,
-rooted in the `xcode` package's transitive `uuid` dependency. The suggested npm
-automatic resolution includes downgrading Expo to SDK 46; it has not been
-applied. Review the upstream fix before progressing to a release/custody build.
+## Verification record — 26 September 2026
 
-Physical acceptance still requires running the checklist above on an Android
-phone and iPhone. Record OS/device and result before calling the UI device-tested.
-Native custody, live relay interoperability and a real Testnet4 payment are
-unimplemented and untested in this phase.
+Dependency installation, all 14 protocol/Bitcoin tests, TypeScript, lint and
+Android/iOS JavaScript exports passed. The standalone Android release build
+passed and its APK signature was verified: `artifacts/remote-signer-client-arm64.apk`,
+version 0.2.0 (code 2), ARM64, minimum Android 7. The APK uses the local test
+certificate. No physical Android/iPhone or live ESP32 round trip was tested.
+The corrected iOS native project has not been rebuilt.

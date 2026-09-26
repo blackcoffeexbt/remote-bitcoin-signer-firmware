@@ -4,12 +4,13 @@
   before changing the mobile app or signer behavior. [docs/protocol.md](docs/protocol.md)
   defines the existing v1 wire contract. Keep both accurate when changing it.
 - `src/` is ESP32 firmware; `mobile/` is a separate React Native / Expo project.
-  The mobile starter is a simulation, not a live Bitcoin signer. Preserve that
-  distinction in UI, documentation and completion reports until Phase 1 passes.
+  The mobile app is the remote client, equivalent to the LNbits browser. Bitcoin
+  keys, approval policy and signing stay on the ESP32. Distinguish implemented
+  client functionality from physically verified interoperability.
 - Stay Testnet4-only. Preserve explicit LNbits broadcast, request-bound approval,
   remote PIN semantics, validation before signing, and locking on terminal paths.
 - Never log/store demo inputs as real secrets or introduce seed/PIN telemetry.
-  Do not add live custody without the storage and validation gates in the spec.
+  Never add Bitcoin custody to the phone; this project is a remote client.
 - `lnbits/` is an ignored, separately managed checkout. Do not make the mobile
   project depend on it or modify it without inspecting its own AGENTS.md.
 - For mobile changes run `npm ci`, `npm test`, `npm run typecheck`, `npm run lint` and

@@ -5,8 +5,10 @@ A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. LNbits builds a PSBT, the
 ## Mobile app
 
 The React Native / Expo project in [`mobile/`](mobile/README.md) starts with a
-Testnet4 approval-flow simulation for Android and iOS. It does not yet hold keys
-or sign transactions. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
+Testnet4 remote client for Android and iOS. It pairs with the ESP32, submits
+PSBTs and encrypted wallet PINs, and verifies/exports signed PSBTs. Bitcoin keys
+and signing stay on the ESP32. Physical-device interoperability remains to be
+verified. The [current flow and mobile delivery specification](docs/mobile-signer-spec.md)
 documents user interactions, Nostr event structures, security boundaries and
 phases toward the first live signing MVP. Local Android Studio/Xcode and
 physical-device testing instructions are in the [mobile guide](mobile/README.md).

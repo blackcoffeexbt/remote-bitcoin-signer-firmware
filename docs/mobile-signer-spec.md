@@ -1,23 +1,24 @@
 # Remote Bitcoin Signer: current flow and mobile delivery specification
 
-Status: implementation baseline, 26 September 2026. The mobile project starts at
-Phase 0; it is not yet a Bitcoin signer. This document describes the current
-ESP32 + LNbits implementation separately from the proposed mobile behavior.
+Status: corrected client implementation, 26 September 2026. The phone controls
+the existing ESP32 signer. The earlier phone-as-signer proposal and simulation
+were incorrect and are superseded by this specification.
 
 ## Product direction
 
-Working assumption: the Android/iOS app **replaces the ESP32 signer**, holding the
-Bitcoin wallet and responding to the existing LNbits browser over Nostr. LNbits
-continues to discover UTXOs, build payments, verify/finalize signed transactions,
-and broadcast after a separate user action. The phone is not a second LNbits
-wallet UI or a remote control for the ESP32. Confirm this assumption before
-implementing custody. The starter contains no seed, PIN, network signing, or
-production vault implementation.
+The Android/iOS app occupies the same protocol role as the LNbits browser:
+**it is the remote client, not the Bitcoin signer**. The ESP32 retains the seed,
+wallet vault, settings PIN, validation, signing and approval policy. The phone
+has only its own independent Nostr transport identity and public account data.
+It sends the wallet PIN to the ESP32 only in the existing encrypted, request-bound
+`unlock` message. No Bitcoin wallet creation, restoration or local signing exists.
 
-The smallest useful live MVP is: restore a disposable Testnet4 wallet on the
-phone, pair LNbits, import its public account, receive test coins, review and
-manually sign one payment, then explicitly broadcast from LNbits. Keep the app
-foregrounded. Automatic approval and background delivery are later phases.
+The first functional client MVP imports an unsigned Testnet4 PSBT prepared by
+LNbits, reviews it, requests an ESP32 signature, collects the requested wallet
+PIN, follows authenticated progress, verifies the returned signatures and
+exports the signed PSBT. LNbits remains responsible for transaction preparation,
+finalization and an explicit broadcast. This phase does not replicate LNbits'
+balances, UTXO discovery, coin selection or transaction builder inside the phone.
 
 ## Current system and trust boundaries
 
@@ -240,85 +241,91 @@ save failure or time rollback. Defaults are zero (manual approval only).
 
 Current firmware vault: PBKDF2-HMAC-SHA256, 210,000 rounds, random 16-byte salt,
 AES-256-GCM with random 12-byte nonce. Settings credential is separate. This
-format is not automatically the mobile storage design. Neither firmware nor
-the mobile starter claims secure-element Bitcoin signing.
+format belongs to the ESP32; the phone stores no Bitcoin vault.
 
-## Mobile architecture and lifecycle
+## Mobile client architecture and lifecycle
 
-Use React Native + TypeScript with Expo development builds, generating local
-Android/iOS projects for Android Studio/Xcode. Keep protocol validation, request
-state, storage, Bitcoin validation/signing and UI separate. Bundle dependencies
-inside `mobile/`; do not import code from the ignored LNbits checkout.
+`mobile/src/client.ts` owns the real Nostr connection: bounded secure pairing
+JSON, event signatures, NIP-44 encryption, exact response binding, authenticated
+progress, identical-event multi-relay retry every five seconds, reconnect,
+150-second deadlines, per-operation concurrency and request-bound PIN handling.
+Every sign fetches the device's current session. The previously paired xpub is
+pinned; a changed account requires deliberate re-pairing. Closing the phone's
+client only stops local waiting: v1 has **no remote cancel/lock/approve method**.
+The UI must never imply otherwise. An ESP32 request may still complete after
+the phone disconnects; check device/LNbits state before starting a new request.
 
-The starter implements a deterministic in-memory request reducer and a plainly
-labelled simulated manual-approval journey. It displays full fixture addresses,
-amounts, fee/change, expiry, reject/lock outcomes, and the return-to-LNbits step.
-Its demo unlock action represents LNbits delivering an authenticated unlock;
-it never collects a real PIN or creates a signature. It has no relay connection.
+`mobile/src/storage.ts` stores the independent Nostr private key using Expo
+SecureStore (iOS Keychain / Android Keystore-backed storage) with unlocked,
+this-device-only iOS accessibility. Connection information and the pinned xpub
+are saved separately. Pairing tokens, PINs and PSBTs are not persisted there.
+The candidate connection is saved before requesting pairing, so a local storage
+interruption after device approval can be recovered with Reconnect. Forgetting
+local state rotates the phone identity but does not revoke the old identity on
+the ESP32; the user must revoke it in device Settings → Paired browsers.
 
-For live MVP, preserve v1 remote PIN semantics to work with existing LNbits.
-Local-only/biometric unlock would change that contract: negotiate a versioned
-capability or update both ends, rather than silently skipping PIN required.
-Use native OS-backed storage for the transport credential and a separately
-encrypted Bitcoin vault; choose and validate native KDF/AEAD/key handling before
-custody. Persist public account and peer records independently so locked account
-retrieval works. Do not put keys/PINs in AsyncStorage, logs, analytics or clipboard.
-JavaScript garbage collection cannot guarantee secret zeroization; production
-key handling needs a reviewed native boundary. Exclude secrets from backups.
+`mobile/src/bitcoin.ts` validates public account structure and Testnet BIP84 xpub,
+derives a labelled index-0 receive address, parses bounded PSBT v0, verifies full
+previous transactions and account derivations, computes fee/debit and recognizes
+owned outputs. The ESP32 remains the authoritative transaction validator. On
+return, the client compares the entire unsigned transaction, requires one
+SIGHASH_ALL signature from the expected account key on every input, verifies
+ECDSA against the **original** UTXOs and returns the original maps plus only
+those verified signatures. Returned metadata cannot change the reviewed PSBT.
 
-On inactive/background: obscure sensitive UI, cancel active review, close live
-sockets and clear unlocked material. Foreground reestablishes connections; do
-not resume approval automatically. Process restart rotates session. A future
-push notification is only a wake hint; fetch and authenticate the request and
-require live review. iOS/Android do not promise always-on relay sockets.
+`App.tsx` implements pairing QR/paste, client key comparison, reconnect, public
+account display/share, unsigned PSBT paste/file import, recipient/change/fee
+review, Request signature, authenticated PIN entry and progress, and signed
+PSBT copy/file sharing. Approval/rejection and device settings stay on ESP32.
+The index-0 receive address is a reference, not a fresh-address allocator.
 
-## Phased implementation and acceptance gates
+On inactive/background, close sockets, stop request retries, invalidate stale UI
+callbacks, obscure content, and clear PIN/pairing text. Do not resume pending
+approval automatically. Public review/output can remain in memory so file
+sharing is usable. File exports are temporary and removed when sharing ends.
+CSPRNG bytes come from Expo Crypto before Nostr dependencies initialize. Never
+log PINs/keys or use Math.random. JavaScript cannot guarantee erasure of every
+string copy; make no native-memory zeroization claim for this client.
 
-| Phase | Deliverable | Exit test |
+## Corrected phases and acceptance gates
+
+| Phase | Deliverable | Exit gate |
 | --- | --- | --- |
-| **0 — starter (this change)** | Expo TypeScript app, Testnet4-only simulated approval flow, request-bound reducer, local run guide | Type-check and both platform bundles pass; state tests cover stale actions, expiry, background lock, rejection and completion. Physical taps still require device testing. |
-| **1 — first functional signing MVP** | Restore disposable 12/24-word wallet with checksum validation, confirm wallet/settings PINs, encrypted persistence, public account derivation; stable separate Nostr identity; secure relay configuration; QR/paste pairing and local peer confirmation; pair/revoke and get_account; real v1 sign/unlock/manual review/result | On both physical phones: restart, pair existing LNbits, auto-import matching descriptor, receive Testnet4 coins, sign one payment, verify and explicitly broadcast in LNbits. Reject and wrong-PIN paths pass. No automatic approval/background signing. |
-| **2 — recovery and reliability** | Generate/verify recovery words, polished settings and peer management, multi-relay reconnect/retry/replay, migration/backup rules and durable accounting, offline/expiry recovery | Airplane mode, two-relay duplicates, process kill/background, revoked peer, wrong session, stale tap, oversized/hostile PSBT and storage failure all fail safely. Restore recovers same public account on each OS. |
-| **3 — firmware feature parity** | Optional auto-approval thresholds, durable shared daily budget, richer request history without secrets | Strict threshold/equality, day rollover/clock rollback, reboot and failed delivery accounting pass; each signature still requires PIN. |
-| **4 — release hardening** | Native custody review, dependency/security review, accessibility, release signing, optional authenticated wake notifications | Independent security review and release-device regression; no mainnet until explicitly scoped and reviewed. |
+| **1 — remote client MVP (implemented)** | Real QR/paste pairing, secure transport identity, public account, PSBT import/review, encrypted sign/unlock, progress, verified signed PSBT export | Automated real-crypto protocol/Bitcoin tests, typecheck/lint and Android/iOS bundles; physical ESP32 + Android/iPhone round trip still required |
+| **2 — wallet convenience** | Optional LNbits API integration or explicit Testnet4 chain backend for balances, fresh receive addresses, UTXO selection, payment/fee construction and explicit broadcast | End-to-end payment on both phones with double-spend/fee/error handling and no automatic broadcast |
+| **3 — reliability and release** | More relay fault testing, accessibility, optional authenticated notifications, app signing/release review | Device background/expiry/reconnect tests, storage migrations and security review |
 
-Implement Phase 1 in small vertical steps: (a) native vault + independently
-checked public account vectors; (b) encrypted pair/get_account interoperability;
-(c) constrained PSBT validation + full review; (d) sign/unlock/result and LNbits
-verification/broadcast. Use audited Bitcoin/Nostr implementations; do not write
-new cryptographic primitives. Every step remains manually testable. Minimal
-replay/session/expiry protection is required in Phase 1; Phase 2 expands fault
-testing and recovery rather than deferring these protections.
+Out of scope: Bitcoin custody on the phone; remotely changing ESP32 settings,
+pairing approval, policy or revocation (v1 exposes none); mainnet; automatic
+broadcast; always-on background signing; Taproot/multisig inputs.
 
-Deferred from MVP: balances/coin selection on phone, LNbits API credentials,
-mainnet, additional accounts, passphrases, Taproot, multisig, hardware migration,
-automatic broadcast, always-on background service, and store publication.
+## Physical acceptance checklist
 
-## Device test plan
+1. Open ESP32 Settings → Pair a browser. Scan its QR from the phone or paste the
+   JSON. Confirm the phone's displayed key on the ESP32 and approve there.
+2. Verify the descriptor/xpub/fingerprint against the device/LNbits account.
+   Restart the phone and reconnect; the client key and pairing should survive.
+   Reboot ESP32 and sign again to test automatic fresh-session retrieval.
+3. Build a disposable Testnet4 payment in LNbits including full previous
+   transactions. Export its unsigned PSBT and import/paste into the phone.
+4. Review full recipients, amounts, owned outputs, fee and debit. Request device
+   signing; PIN entry must appear only after the authenticated PIN-required status.
+5. Enter the **wallet** PIN on the phone. Review and approve/reject on ESP32.
+   Verify the returned PSBT on the phone, export to LNbits, and broadcast there
+   explicitly after its own verification/finalization.
+6. Exercise wrong PIN/cooldown, rejection, revoked pairing, offline relays,
+   deadline expiry, backgrounding, restart, changed device account, malformed
+   PSBT and duplicate relay deliveries. Stopping the phone is not remote cancel.
+7. Verify denied camera permission falls back to paste, binary/base64 PSBT file
+   import works, signed PSBT sharing works, and PIN is absent after backgrounding.
 
-See [mobile/README.md](../mobile/README.md) for local installation. Use disposable
-Testnet4 funds and record OS, device, app commit, LNbits commit, relays and result.
+Automated tests do not establish real ESP32 interoperability or physical-device
+UI behavior. Record actual device/OS/firmware/app versions when completing these
+gates. See [mobile/README.md](../mobile/README.md) for build and test instructions.
 
-1. Phase 0 on Android and iPhone: start demo, observe PIN-wait placeholder,
-   simulate unlock, inspect every address/amount, approve; repeat with reject,
-   expiry and Home/app switching. Confirm no actual signing/broadcast claim.
-2. Phase 1: restore same fixture on each platform separately; compare descriptor,
-   xpub and fingerprint with independently derived vectors. Reopen and verify
-   credentials persist while Bitcoin wallet starts locked.
-3. Pair LNbits → verify both displayed peer identity and account import. Cancel
-   and expire pairing. Revoke and confirm the old peer cannot retrieve/sign.
-4. Fund an address on Testnet4; construct a transaction with recipient + change.
-   Verify full review and fee; approve; check signatures and unchanged unsigned
-   transaction using LNbits, then explicitly broadcast and check confirmation.
-5. Reject, wrong PIN, cooldown, deadline during KDF, wrong hash/session/peer,
-   duplicate delivery, reconnect, background and restart. No stale approval,
-   duplicate signature or automatic broadcast is allowed.
+## References
 
-Current delivery validation is recorded in the mobile README. A JavaScript
-bundle does not prove native compilation, key security or live interoperability.
-
-## Platform references
-
-- [Expo local builds with Android Studio and Xcode](https://docs.expo.dev/guides/local-app-overview/)
-- [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/)
-- [React Native security and sensitive storage](https://reactnative.dev/docs/security)
+- [Expo local builds](https://docs.expo.dev/guides/local-app-overview/)
+- [React Native security](https://reactnative.dev/docs/security)
+- [nostr-tools](https://github.com/nbd-wtf/nostr-tools)
+- [bitcoinjs-lib](https://github.com/bitcoinjs/bitcoinjs-lib)
