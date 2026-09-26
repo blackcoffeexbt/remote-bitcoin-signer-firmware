@@ -171,3 +171,18 @@ during the integration check; the app reports this and supports a manual fee rat
 - Device PIN is shown only for an authenticated request. Send confirmation remains
   separate from signing. Backgrounding hides content and cancels local waiting,
   without implying that the device or network cancelled a payment.
+
+
+### UI verification — 26 September 2026
+
+Version 0.4.0 adds Expo Router navigation and shared client/wallet providers.
+Clean `npm ci`, 41 tests, TypeScript, lint, and Android/iOS JavaScript exports
+passed. Android ARM64 release packaging passed. On the Pixel 9 Pro Android 36
+emulator, the app launched and Wallet → Settings → Signing device and back
+navigation were checked, including visual inspection of pairing and wallet server
+screens. The final APK signature and version 0.4.0 (code 4) were verified.
+No React Native or Android app runtime errors were reported in that check.
+The emulator briefly showed an Android System UI timeout during startup.
+No physical phones, iOS native build, hardware pairing, QR camera scan, or signed
+payment navigation/recovery flow was tested for this UI update. Complete the
+acceptance and device checklists above before relying on payment flows.
