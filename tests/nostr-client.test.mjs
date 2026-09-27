@@ -6,7 +6,7 @@ import {webcrypto} from 'node:crypto'
 const require = createRequire(process.env.LNBITS_PACKAGE || new URL('../../lnbits/package.json', import.meta.url))
 const tools = require('nostr-tools')
 const source = readFileSync(new URL('../../lnbits/lnbits/onchain/static/js/nostr-signer-client.js', import.meta.url), 'utf8')
-const {NostrBitcoinSigner, parsePairing, BITCOIN_SIGNER_KIND} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
+const {NostrBitcoinSigner, parsePairing, BITCOIN_SIGNER_RESPONSE_KIND} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
 class Socket {
   constructor(url) {this.url=url;this.readyState=0;this.sent=[]}
   send(value) {this.sent.push(JSON.parse(value))}
@@ -22,9 +22,9 @@ function setup() {
 function request(client) {
   return client.sockets[0].sent.findLast(v=>v[0]==='EVENT')[1]
 }
-function response(client, body, secret=deviceSecret) {
+function response(client, body, secret=deviceSecret, kind=BITCOIN_SIGNER_RESPONSE_KIND) {
   const key=tools.nip44.v2.utils.getConversationKey(secret,client.clientKey)
-  const event=tools.finalizeEvent({kind:BITCOIN_SIGNER_KIND,created_at:Math.floor(Date.now()/1000),
+  const event=tools.finalizeEvent({kind,created_at:Math.floor(Date.now()/1000),
     tags:[['p',client.clientKey]],content:tools.nip44.v2.encrypt(JSON.stringify(body),key)},secret)
   return JSON.stringify(['EVENT','bitcoin-v1',event])
 }
@@ -279,3 +279,18 @@ test('automatic approval status is authenticated progress and never completes si
     assert.deepEqual(await signed, {psbt: 'signed'})
   } finally { c.close() }
 })
+
+test('NIP-B8 uses directional kinds and ignores signed legacy or request-kind replies', async () => {
+  const c = setup();
+  try {
+    assert.deepEqual(c.sockets[0].sent[0][2].kinds, [24811]);
+    const pending = c.request('get_account');
+    assert.equal(request(c).kind, 24810);
+    for (const kind of [24133, 24134, 24810]) {
+      await c.receive(response(c, body(c), deviceSecret, kind));
+      assert.equal(c.pending.size, 1);
+    }
+    await c.receive(response(c, body(c)));
+    await pending;
+  } finally { c.close(); }
+});

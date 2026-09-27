@@ -1,8 +1,19 @@
-# Experimental Bitcoin signer protocol v1
+# Proposed NIP-B8: Bitcoin Remote Signing v1
 
-This is a project-specific protocol, not NIP-46. Both directions use signed NIP-01 events of kind `24134`, with exactly one `p` tag containing the recipient's 64-character lowercase hex Nostr public key. The event content is NIP-44 v2 encrypted JSON. Never send a Bitcoin seed. A PIN is accepted only in a NIP-44 encrypted `unlock` request from the paired browser owning the active signing request. Bitcoin and Nostr identities are separate.
+This implements the draft [NIP-B8](../../nips/B8.md), independently of NIP-46.
+The NIP number and kinds are provisional, not assigned upstream. Client requests
+use kind `24810`; signer responses and progress use kind `24811`. Both use signed NIP-01 events, with exactly one `p` tag containing the recipient's 64-character lowercase hex Nostr public key. The event content is NIP-44 v2 encrypted JSON. Never send a Bitcoin seed. A PIN is accepted only in a NIP-44 encrypted `unlock` request from the paired browser owning the active signing request. Bitcoin and Nostr identities are separate.
 
 Validate the event hash, Schnorr signature, author, recipient, kind and timestamps before decrypting. Firmware only accepts unpaired senders while its local pairing window is open. NIP-44 authenticates ciphertext; it does not conceal routing metadata from relays or provide forward secrecy.
+
+## Transport migration
+
+Upgrade firmware, mobile and LNbits together. Kind `24134` is no longer sent or
+accepted; there is no legacy fallback or NIP-46 negotiation. Existing transport
+identities, pairings and public-account pins remain valid after all peers upgrade.
+The encrypted `bitcoin-signer` version `1` payload and pairing QR stay unchanged;
+the dedicated kinds identify this transport. Older peers will time out. Relays
+must permit both new ephemeral kinds and the documented frame sizes.
 
 ## Bitcoin network
 

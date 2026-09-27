@@ -61,8 +61,8 @@ crosses networks. Explicit user-confirmed broadcast remains mandatory.
 | mempool.space | Selected-network fee-rate recommendations only; receives no wallet/account data |
 | Nostr relays | Carry signed encrypted events; see author, recipient, time, size and traffic patterns; not trusted for authorization or delivery |
 
-Bitcoin and Nostr keys are independent. This protocol is project-specific v1,
-**not NIP-46**. NIP-44 provides ciphertext authentication but neither forward
+Bitcoin and Nostr keys are independent. This protocol implements proposed [NIP-B8](../../nips/B8.md) v1,
+independently of NIP-46. Its number and event kinds are provisional. NIP-44 provides ciphertext authentication but neither forward
 secrecy nor routing privacy. The signer validates supplied previous transactions;
 it cannot prove inputs remain unspent without chain access. Mainnet and Testnet4; Mainnet is the default.
 
@@ -146,11 +146,14 @@ of touchscreen activity. There is no corresponding remote method.
 
 ### Nostr transport envelope
 
+Requests use kind `24810`; responses and progress use kind `24811`.
+Upgrade all peers together; legacy kind `24134` has no fallback (see
+[protocol migration](protocol.md#transport-migration)). The envelope below is a request.
 Both directions publish `["EVENT", event]`; subscriptions receive
 `["EVENT", subscriptionId, event]`. A browser subscribes using:
 
 ```json
-["REQ", "bitcoin-v1", {"kinds":[24134], "authors":["<signer pubkey>"], "#p":["<browser pubkey>"], "since":1800000000}]
+["REQ", "bitcoin-v1", {"kinds":[24811], "authors":["<signer pubkey>"], "#p":["<browser pubkey>"], "since":1800000000}]
 ```
 
 `since` is current Unix seconds minus 180. A signer filters by its recipient key
@@ -161,7 +164,7 @@ and authorizes peers locally (new peers only during its pairing window).
   "id": "<64 lowercase hex event hash>",
   "pubkey": "<64 lowercase hex sender x-only Nostr public key>",
   "created_at": 1800000000,
-  "kind": 24134,
+  "kind": 24810,
   "tags": [["p", "<64 lowercase hex recipient public key>"]],
   "content": "<base64 NIP-44 v2 encrypted JSON>",
   "sig": "<128 lowercase hex Schnorr signature>"
@@ -172,7 +175,7 @@ Exactly one tag is allowed, exactly `['p', recipient]`. Event ID is SHA-256 of
 NIP-01 canonical JSON `[0,pubkey,created_at,kind,tags,content]`; signature is
 BIP340 over that ID. Verify hash/signature, routing, author, kind and timestamp
 **before** decryption. Do not confuse the event ID with the inner request ID.
-Ephemeral kind 24134 does not guarantee offline delivery. Sign a request once,
+Ephemeral kinds 24810 and 24811 does not guarantee offline delivery. Sign a request once,
 send that identical event to all relays, and retry it every five seconds until
 completion/deadline. Restore subscriptions and resend pending events on reconnect.
 

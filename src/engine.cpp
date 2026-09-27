@@ -21,7 +21,8 @@
 extern const uint8_t relayRoots[] asm("_binary_data_cert_roots_bin_start");
 namespace Engine {
 using namespace Wallet;
-constexpr int KIND = 24134; // Experimental Bitcoin signer protocol, not NIP-46.
+constexpr int REQUEST_KIND = 24810; // Proposed NIP-B8 Bitcoin signing requests.
+constexpr int RESPONSE_KIND = 24811; // Responses and progress.
 static QueueHandle_t commands, events;
 static Account account;
 static String secret, pubkey, session, pairToken, savedAccount;
@@ -187,7 +188,7 @@ static void reply(const String &peer, const String &id, const String &method, co
         d["result"].set(r.as<JsonVariant>());
     }
     auto clear = json(d);
-    auto wire = nostr::getEncryptedDm(secret.c_str(), pubkey.c_str(), peer.c_str(), KIND,
+    auto wire = nostr::getEncryptedDm(secret.c_str(), pubkey.c_str(), peer.c_str(), RESPONSE_KIND,
                                       time(nullptr), clear, "nip44");
     require(wire.length(), "Response encryption failed");
     while (!replies.empty() && replies.front().expiry <= time(nullptr))
@@ -294,7 +295,7 @@ static void receive(const uint8_t *payload, size_t length) {
            content = e["content"] | "";
     auto now = time(nullptr);
     if (!hexString(peer, 64) || !hexString(idHash, 64) || !hexString(sig, 128) ||
-        e["kind"] != KIND || !e["created_at"].is<unsigned long>())
+        e["kind"] != REQUEST_KIND || !e["created_at"].is<unsigned long>())
         return;
     auto created = e["created_at"].as<unsigned long>();
     if (created > now + 30 || created + 180 < now || content.length() > 90000)
@@ -307,7 +308,7 @@ static void receive(const uint8_t *payload, size_t length) {
     a.add(0);
     a.add(peer);
     a.add(created);
-    a.add(KIND);
+    a.add(REQUEST_KIND);
     a.add(tags);
     a.add(content);
     auto canonicalString = json(canonical);
@@ -455,7 +456,7 @@ static void connectRelays() {
                 a.add("REQ");
                 a.add("bitcoin-v1");
                 auto f = a.createNestedObject();
-                f.createNestedArray("kinds").add(KIND);
+                f.createNestedArray("kinds").add(REQUEST_KIND);
                 f.createNestedArray("#p").add(pubkey);
                 f["since"] = time(nullptr) - 180;
                 String req = json(d);
