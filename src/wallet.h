@@ -1,4 +1,5 @@
 #pragma once
+#include "bitcoin_network.h"
 #include "crypto_cache.h"
 #include "dice_entropy.h"
 #include "signing.h"
@@ -239,7 +240,7 @@ class Account {
                                  material.seed, 64, material.master);
         require(!rc, "Wallet derivation failed");
         root.reset(
-            new HDPrivateKey(material.master, material.master + 32, 0, nullptr, 0, &Testnet));
+            new HDPrivateKey(material.master, material.master + 32, 0, nullptr, 0, (BITCOIN_TESTNET4 ? &Testnet : &Mainnet)));
         require(bool(*root), "Invalid seed");
         account.reset(new HDPrivateKey(BitcoinSigning::accountKey(*root)));
     }
@@ -261,7 +262,7 @@ class Account {
         return String(out);
     }
     String descriptor() {
-        String s = "wpkh([" + fingerprint() + "/84h/1h/0h]" + xpub() + "/<0;1>/*)";
+        String s = "wpkh([" + fingerprint() + BitcoinNetwork::origin + xpub() + "/<0;1>/*)";
         return s + "#" + descriptorChecksum(s);
     }
     Derived derive(uint32_t branch, uint32_t index) {

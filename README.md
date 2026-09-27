@@ -5,7 +5,7 @@ signal logo appears at startup, on the home screen and in Settings. Network setu
 also uses the Argus name and palette. The v1 `bitcoin-signer` wire protocol and NVS
 namespaces remain unchanged for existing wallets and pairings.
 
-A dedicated ESP32-S3 / PlatformIO **Testnet4** signer. The mobile wallet or LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate, explicit action in the client.
+A dedicated ESP32-S3 / PlatformIO **Mainnet / Testnet4** signer. The mobile wallet or LNbits builds a PSBT, the device validates it and applies your touchscreen-approval policy, and an encrypted signed PSBT comes back over Nostr. Broadcasting remains a separate, explicit action in the client.
 
 ## What this repository contains
 
@@ -20,8 +20,23 @@ clients using signed, NIP-44 encrypted Nostr messages.
 - Show the approval-limit reason to LNbits while waiting for device approval.
 - Persist PIN failure counters and wipe device storage on the 16th failed attempt.
 
-**Testnet4 only.** This is experimental firmware. Automated tests and successful
+**Mainnet is the default; Testnet4 is available at build time.** This is experimental firmware. Automated tests and successful
 builds do not establish physical-device security or end-to-end interoperability.
+
+## Bitcoin network
+
+Set `[bitcoin] testnet4` in [platformio.ini](platformio.ini) to `0` for Mainnet
+(default) or `1` for Testnet4, then build. This controls account derivation,
+xpub/tpub encoding, address display, PSBT validation and protocol messages.
+There is no on-device or remote network selector. The screen banner and payment
+review show the compiled network.
+
+Choose the same network in the mobile app's **Settings → Bitcoin network**.
+A mismatch blocks signing and explains which network to select. Mainnet uses
+`m/84'/0'/0'`; Testnet4 uses `m/84'/1'/0'`. After changing the firmware's build
+network, a local wallet unlock must refresh cached public metadata; pair again
+to deliberately accept the new xpub. Existing vault, pairings and approval-policy
+storage are retained. The Testnet4 walkthrough below requires a Testnet4 build.
 
 ## View your recovery phrase
 
@@ -53,8 +68,8 @@ Dice mode uses **only the rolls**, with no device randomness, salt or timestamp.
 For reproducibility, concatenate the exact digits `1`–`6` as ASCII, with **no
 spaces, separators or trailing newline**; compute SHA-256, take the **first 16
 bytes** of the digest, then encode these as an English BIP39 12-word mnemonic
-with its normal checksum. BIP39 passphrase is empty; the Testnet4 account is
-`m/84'/1'/0'`. Other tools must use this exact conversion to reproduce the wallet;
+with its normal checksum. BIP39 passphrase is empty; the Mainnet account is
+`m/84'/0'/0'` and Testnet4 is `m/84'/1'/0'`. Other tools must use this exact conversion to reproduce the wallet;
 “dice mode” alone does not imply compatibility. Independent Nostr identity and
 PIN-encrypted vault storage still use randomness and are not reproduced.
 
@@ -138,7 +153,7 @@ Daily usage counts all signing reservations, including manually approved transac
 
 ## Deliberate v1 limits
 
-- One account: `m/84'/1'/0'`, native SegWit, receive/change branches 0 and 1; no BIP39 passphrase.
+- One account: `m/84'/0'/0'` on Mainnet or `m/84'/1'/0'` on Testnet4, native SegWit, receive/change branches 0 and 1; no BIP39 passphrase.
 - PSBT v0, transaction version 2, final input sequences, zero locktime, `SIGHASH_ALL`, at most 32 inputs and 32 outputs, decoded PSBT at most 32 KiB.
 - Every input must belong to this account. Full previous transactions are required and their hashes, output indexes, scripts and amounts are verified. Conflicting witness metadata is rejected.
 - Recipient scripts: P2PKH, P2SH, P2WPKH and P2WSH. No Taproot, multisig inputs, arbitrary scripts, pre-signed inputs, or unsupported PSBT metadata.
@@ -156,10 +171,12 @@ signing comparison uses that checkout's `wallycore` environment and test vectors
 
 ```sh
 python3 scripts/test-native.py
-tests/generated/native/validator --dice
+tests/generated/native/mainnet/validator --dice
 clang++ -std=c++17 -fsanitize=address,undefined tests/recovery-view.cpp -o /tmp/recovery-view-tests
 /tmp/recovery-view-tests
 ../lnbits/.venv/bin/python tests/test_signing.py
+python3 scripts/test-native.py --network testnet4
+BITCOIN_NETWORK=testnet4 ../lnbits/.venv/bin/python tests/test_signing.py
 clang++ -std=c++17 -fsanitize=address,undefined tests/protocol.cpp -o /tmp/bitcoin-protocol-tests
 /tmp/bitcoin-protocol-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/approval-policy.cpp -o /tmp/approval-policy-tests

@@ -1,4 +1,5 @@
 #pragma once
+#include "bitcoin_network.h"
 // Strict, platform-independent PSBT v0 boundary. No Bitcoin secrets live here.
 #include <algorithm>
 #include <array>
@@ -163,7 +164,7 @@ inline Derived derivation(const Bytes &key, const Bytes &value, const Bytes &fin
     require(key.size() == 34 && value.size() == 24, "Unsupported derivation");
     Reader r{value};
     require(r.take(4) == fingerprint, "Wrong wallet fingerprint");
-    require(r.number(4) == 0x80000054 && r.number(4) == 0x80000001 && r.number(4) == 0x80000000,
+    require(r.number(4) == 0x80000054 && r.number(4) == BitcoinNetwork::coinType && r.number(4) == 0x80000000,
             "Wrong account path");
     branch = r.number(4);
     auto index = r.number(4);

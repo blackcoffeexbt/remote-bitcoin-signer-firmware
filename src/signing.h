@@ -1,12 +1,13 @@
 #pragma once
+#include "bitcoin_network.h"
 #include "validation.h"
 #include <Bitcoin.h>
 #include <Hash.h>
 namespace BitcoinSigning {
 using namespace BitcoinPolicy;
 inline HDPrivateKey accountKey(const HDPrivateKey &root) {
-    auto account = root.derive("m/84h/1h/0h");
-    // The descriptor carries the script policy; export standard BIP32 tpub.
+    auto account = root.derive(BitcoinNetwork::derivePath);
+    // The descriptor carries the script policy; export standard BIP32 xpub/tpub.
     account.type = P2PKH;
     return account;
 }

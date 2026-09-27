@@ -3,11 +3,15 @@
 
 from pathlib import Path
 import subprocess
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--network', choices=['mainnet', 'testnet4'], default='mainnet')
+network = parser.parse_args().network
 root = Path(__file__).resolve().parents[1]
 lib = root / ".pio/libdeps/esp32-s3-n16r8v/uBitcoin/src"
-build = root / "tests/generated/native"
+build = root / "tests/generated/native" / network
 build.mkdir(parents=True, exist_ok=True)
 sources = (
     list(lib.glob("*.cpp"))
@@ -15,6 +19,7 @@ sources = (
     + [lib.parent / "tests/sysrand.c", root / "tests/validator.cpp"]
 )
 flags = [
+    "-DBITCOIN_TESTNET4=" + ("1" if network == "testnet4" else "0"),
     "-DUSE_STDONLY",
     "-DUBTC_TEST",
     "-I" + str(lib),

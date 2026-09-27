@@ -486,8 +486,8 @@ void generationOptions() {
 void welcome() {
     screen("Welcome to Argus");
     DeviceUI::brand(page, true);
-    label("Create a new wallet or restore a recovery phrase. This prototype only signs Testnet4 "
-          "transactions.");
+    label(String("Create a new wallet or restore a recovery phrase. This device signs ") +
+          BitcoinNetwork::name + " transactions.");
     button("Generate wallet", [](lv_event_t *) { generationOptions(); });
     button("Restore wallet", [](lv_event_t *) {
         screen("Restore recovery phrase");

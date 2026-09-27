@@ -171,7 +171,7 @@ static void reply(const String &peer, const String &id, const String &method, co
     d["version"] = 1;
     d["id"] = id;
     d["method"] = method;
-    d["network"] = "Testnet4";
+    d["network"] = BitcoinNetwork::name;
     d["psbt_hash"] = hash;
     if (status.length()) {
         d["status"] = status;
@@ -204,6 +204,8 @@ static void reply(const String &peer, const String &id, const String &method, co
 static String publicAccount() {
     DynamicJsonDocument d(2048);
     require(!deserializeJson(d, savedAccount), "Public account unavailable; unlock locally once");
+    require(d["path"] == BitcoinNetwork::path,
+            "Firmware network changed; unlock locally once to refresh the public account");
     d["session"] = session;
     return json(d);
 }
@@ -219,7 +221,7 @@ static void rejectPending(const char *reason) {
 }
 static String outputAddress(const Bytes &b) {
     Script script(b.data(), b.size());
-    String address = script.address(&Testnet);
+    String address = script.address((BITCOIN_TESTNET4 ? &Testnet : &Mainnet));
     require(address.length(), "Cannot display recipient address");
     return address;
 }
@@ -268,7 +270,7 @@ static void reviewPending() {
         return;
     }
     const String reason = policy.manualReason(pending.spend, time(nullptr)).c_str();
-    String text = "Manual approval required\n" + reason + "\nClient: " + pending.label + "\nTESTNET4\n";
+    String text = "Manual approval required\n" + reason + "\nClient: " + pending.label + "\n" + BitcoinNetwork::name + "\n";
     for (auto &out : review.tx.outputs)
         text += "\n" + String(out.change ? "CHANGE" : "RECIPIENT") + "\n" +
                 outputAddress(out.script) + "\n" + String((unsigned long long)out.amount) +
@@ -337,7 +339,7 @@ static void receive(const uint8_t *payload, size_t length) {
     String id = request["id"] | "", method = request["method"] | "",
            psbtHash = request["psbt_hash"] | "";
     if (request["protocol"] != "bitcoin-signer" || request["version"] != 1 ||
-        request["network"] != "Testnet4" || !hexString(id, 32) ||
+        (request["network"] != "Mainnet" && request["network"] != "Testnet4") || !hexString(id, 32) ||
         !request["expires"].is<unsigned long>())
         return;
     time_t expires = request["expires"].as<unsigned long>();
@@ -354,6 +356,8 @@ static void receive(const uint8_t *payload, size_t length) {
     if (replay == BitcoinProtocol::ReplayWindow::Full)
         return;
     try {
+        require(request["network"] == BitcoinNetwork::name,
+                "Bitcoin network mismatch; select the device network in app Settings > Bitcoin network");
         if (method == "unlock") {
             require(clients.count(peer), "unauthorized");
             require(BitcoinProtocol::pinRequest(
@@ -489,7 +493,7 @@ static void unlocked(const String &phrase) {
     d["descriptor"] = account.descriptor();
     d["xpub"] = account.xpub();
     d["fingerprint"] = account.fingerprint();
-    d["path"] = "m/84'/1'/0'";
+    d["path"] = BitcoinNetwork::path;
     savedAccount = json(d);
     Preferences p;
     p.begin("btc-signer", false);

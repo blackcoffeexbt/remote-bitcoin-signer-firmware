@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
         for (size_t length : {size_t(16), size_t(32)}) {
             std::string phrase = mnemonicFromEntropy(entropy, length);
             require(checkMnemonic(phrase), "Recovery phrase checksum failed");
-            HDPrivateKey root(phrase, std::string(""), &Testnet);
+            HDPrivateKey root(phrase, std::string(""), (BITCOIN_TESTNET4 ? &Testnet : &Mainnet));
             auto account = BitcoinSigning::accountKey(root);
             char xpub[120];
             account.xpub(xpub, sizeof(xpub));
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 32; i++)
             seed[i] = i;
         HDPrivateKey root;
-        root.fromSeed(seed, 32, &Testnet);
+        root.fromSeed(seed, 32, (BITCOIN_TESTNET4 ? &Testnet : &Mainnet));
         auto account = BitcoinSigning::accountKey(root);
         Bytes fp(4);
         root.fingerprint(fp.data());

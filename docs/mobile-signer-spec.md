@@ -14,12 +14,40 @@ It sends the wallet PIN to the ESP32 only in the existing encrypted, request-bou
 `unlock` message. No Bitcoin wallet creation, restoration or local signing exists.
 
 The phone now implements the complete payment workflow: Electrs-backed wallet
-sync and history, fresh receive addresses, coin control, mempool.space Testnet4
+sync and history, fresh receive addresses, coin control, network-specific mempool.space
 fee estimates, local PSBT construction, remote ESP32 signing, local signature
 verification/finalization and separately confirmed in-app broadcasting. LNbits
 is not a runtime dependency. PSBT import/export remains available as an optional
 interoperability tool. The v0.2 remote-client checkpoint is commit `b62a140`;
 the in-app wallet is v0.3.
+
+## Network selection
+
+Mainnet is the default for firmware builds and the mobile app (including an
+upgrade with no saved network preference). Testnet4 remains available.
+Firmware uses the build-only `[bitcoin] testnet4` flag in platformio.ini, with
+`0` for Mainnet and `1` for Testnet4. On-device controls cannot change it.
+Mobile uses Settings > Bitcoin network and never switches automatically to
+match a device. Authenticated mismatches block signing and explain the fix.
+See [protocol.md](protocol.md#bitcoin-network) for the response-binding exception
+used only to report mismatch errors and the public-account refresh after a
+firmware network change.
+
+Switching the app network is disabled during signing/chain operations or
+unresolved recovery. It closes the signer connection, clears in-memory wallet,
+fees, selections and unsigned review, and requires reconnect. A signed payment
+must have a verified recovery copy before switching. Saved cursors, history and
+signed payments remain keyed by xpub, so the different BIP84 accounts cannot
+share them; switching back and reconnecting restores the account's journal.
+The existing pinned device xpub is retained; a different account requires
+explicit pairing. The separate phone transport identity is retained.
+
+Electrs settings are separate per network. Legacy server preferences belong to
+Testnet4; Mainnet defaults to `ssl://mempool.space:50002`, Testnet4 to
+`ssl://mempool.space:40002`. Every connection checks the selected genesis before
+queries or broadcast. Fee endpoints are `/api/v1/fees/recommended` for Mainnet
+and `/testnet4/api/v1/fees/recommended` for Testnet4 on mempool.space. No fallback
+crosses networks. Explicit user-confirmed broadcast remains mandatory.
 
 ## Current system and trust boundaries
 
@@ -30,13 +58,13 @@ the in-app wallet is v0.3.
 | LNbits server | Public wallet, chain/explorer access, UTXOs, PSBT construction, signature verification/finalization and explicit broadcast; does not receive the remote wallet PIN |
 | Mobile wallet | Independent secure Nostr identity; public account/address cursors; verified UTXOs; local transaction construction/finalization; signed-payment recovery; explicit broadcast |
 | Configured Electrs | Electrum 1.4 TCP/TLS endpoint for history, UTXOs, full previous transactions and broadcast; sees wallet script hashes and transaction bytes |
-| mempool.space | Testnet4 fee-rate recommendations only; receives no wallet/account data |
+| mempool.space | Selected-network fee-rate recommendations only; receives no wallet/account data |
 | Nostr relays | Carry signed encrypted events; see author, recipient, time, size and traffic patterns; not trusted for authorization or delivery |
 
 Bitcoin and Nostr keys are independent. This protocol is project-specific v1,
 **not NIP-46**. NIP-44 provides ciphertext authentication but neither forward
 secrecy nor routing privacy. The signer validates supplied previous transactions;
-it cannot prove inputs remain unspent without chain access. Testnet4 only.
+it cannot prove inputs remain unspent without chain access. Mainnet and Testnet4; Mainnet is the default.
 
 Source of truth: `src/main.cpp` (screens), `src/engine.cpp` (orchestration),
 `src/protocol_state.h` (freshness/replay/session checks), `src/wallet.h`,
@@ -47,7 +75,7 @@ contains `../lnbits/lnbits/onchain/static/js/nostr-signer-client.js`,
 under its onchain directory. It is a separate sibling repository, so mobile code
 must not depend on that checkout being installed. See also [protocol.md](protocol.md).
 
-## Existing ESP32 / LNbits reference journey
+## Existing ESP32 / LNbits reference journey (Testnet4 example)
 
 1. **Provision:** create a 6–32 digit settings PIN. Continue wallet setup;
    generate 12 words and verify each word from four choices, or restore a valid
@@ -56,7 +84,7 @@ must not depend on that checkout being installed. See also [protocol.md](protoco
    die results, with no device randomness: SHA-256 of the ordered ASCII digits
    (no separators), first 16 bytes → English BIP39. The same sequence reproduces
    the same phrase; see [README](../README.md#optional-dice-generation).
-   Account is native SegWit `m/84'/1'/0'`, no BIP39 passphrase.
+   Account is native SegWit `m/84'/0'/0'` on Mainnet or `m/84'/1'/0'` on Testnet4, no BIP39 passphrase.
 2. **Connect:** Settings requires the settings PIN. Network settings opens a
    temporary password-protected Wi-Fi AP, with credentials/QR and
    `http://192.168.4.1/`. Scan/select Wi-Fi (or enter manually), enter its password
@@ -177,7 +205,8 @@ required. Do not log or retain the token after completion.
 | `unlock` | `session`, `request_id`, `pin` (6–32 digits) | Same as parent signing request | `{}`; does not settle signing |
 
 Public account fields: `descriptor`, `xpub`, `fingerprint`, `path`, `session`.
-Descriptor form: `wpkh([fingerprint/84h/1h/0h]tpub.../<0;1>/*)#checksum`.
+Descriptor form for Testnet4: `wpkh([fingerprint/84h/1h/0h]tpub.../<0;1>/*)#checksum`;
+Mainnet uses `84h/0h/0h` and `xpub` instead.
 The session is a boot freshness challenge, not a secret, and does not change
 on wallet lock/unlock. Fetch it before each sign.
 
@@ -290,7 +319,7 @@ interruption after device approval can be recovered with Reconnect. Forgetting
 local state rotates the phone identity but does not revoke the old identity on
 the ESP32; the user must revoke it in device Settings → Paired browsers.
 
-`mobile/src/bitcoin.ts` validates public account structure and Testnet BIP84 xpub,
+`mobile/src/bitcoin.ts` validates public account structure and network-matched BIP84 xpub/tpub,
 derives public BIP84 addresses, parses bounded PSBT v0, verifies full
 previous transactions and account derivations, computes fee/debit and recognizes
 owned outputs. The ESP32 remains the authoritative transaction validator. On
@@ -317,7 +346,9 @@ negative tests remain an acceptance gate.
 Each new connection negotiates Electrum 1.4 and retrieves `blockchain.block.header`
 at height 0. The phone double-SHA256 hashes the 80-byte header and requires
 `00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043`
-before wallet requests or broadcast. Testnet4, Testnet3 and Signet share address
+for Testnet4, or
+`000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f`
+for Mainnet, before wallet requests or broadcast. Testnet4, Testnet3 and Signet share address
 formats, so address validation alone is insufficient. This check catches wrong
 network configuration; it is not chain/SPV validation. Electrs remains trusted
 for completeness, unspent status and confirmations.
@@ -366,13 +397,14 @@ remove the race with another spender; server rejection/uncertainty is surfaced.
 
 ### Fee recommendations
 
-`fees.ts` calls only
-`https://mempool.space/testnet4/api/v1/fees/recommended`, with a 10-second timeout.
+`fees.ts` calls the selected network endpoint only:
+`https://mempool.space/api/v1/fees/recommended` on Mainnet or
+`https://mempool.space/testnet4/api/v1/fees/recommended` on Testnet4, with a 10-second timeout.
 It validates numeric, positive, ordered `fastestFee`, `halfHourFee`, `hourFee`,
 `economyFee`, and `minimumFee` fields and records retrieval time. The UI offers
 those target estimates plus an explicit manual sat/vB field (0.001–10,000).
 No wallet information is sent to mempool.space. Fee lookup failure is visible,
-not silently replaced with mainnet or old data. Selected estimates older than
+not silently replaced with another network or old data. Selected estimates older than
 five minutes must be refreshed or deliberately replaced by a manual rate.
 Targets are estimates, not confirmation guarantees.
 
@@ -421,10 +453,15 @@ string copy; make no native-memory zeroization claim for this client.
 | **3 — reliability and release** | More relay fault testing, accessibility, optional authenticated notifications, app signing/release review | Device background/expiry/reconnect tests, storage migrations and security review |
 
 Out of scope: Bitcoin custody on the phone; remotely changing ESP32 settings,
-pairing approval, policy or revocation (v1 exposes none); mainnet; automatic
+pairing approval, policy or revocation (v1 exposes none); automatic
 broadcast; always-on background signing; Taproot/multisig inputs.
 
 ## Physical acceptance checklist
+
+Verify Mainnet/Testnet4 selection persists after restart, account/fee/history
+state resets on switching, and returning to an account restores its signed
+payment. Check both mismatch directions block signing before PIN entry. Use
+a Testnet4 firmware build and app setting for disposable-fund payment tests.
 
 1. Open ESP32 Settings → Connect Remote Client. Scan its QR from the phone or paste the
    JSON. Confirm the phone's displayed key on the ESP32 and approve there.
@@ -474,8 +511,8 @@ Device pairing lives only in Settings → Signing device. Server configuration i
 Settings → Wallet server. Public account details and PSBT import/export are
 Settings → Advanced tools. Full pairing verification codes appear only while
 pairing. Normal screens never display Nostr/relay/protocol diagnostics, engineering
-notes, conversation history or implementation/testing caveats. Testnet4 remains
-visible as the actual wallet network. Backend errors are translated into actionable
+notes, conversation history or implementation/testing caveats. The selected Bitcoin network remains
+visible on wallet, receive, review and broadcast screens. Backend errors are translated into actionable
 wallet messages without echoing arbitrary server text.
 
 Shared providers preserve public wallet state, selections and prepared payments

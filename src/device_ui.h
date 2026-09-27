@@ -1,4 +1,5 @@
 #pragma once
+#include "bitcoin_network.h"
 #include <lvgl.h>
 #include "argus_logo.h"
 #include "lnbits_logo.h"
@@ -90,7 +91,7 @@ inline lv_obj_t *screen(const char *title) {
     lv_obj_set_style_bg_color(page, lv_color_hex(border), LV_PART_SCROLLBAR);
     lv_obj_set_style_width(page, 3, LV_PART_SCROLLBAR);
     lv_obj_set_style_radius(page, 2, LV_PART_SCROLLBAR);
-    label(page, "ARGUS  /  TESTNET4", &lv_font_montserrat_12, mint);
+    label(page, BitcoinNetwork::banner, &lv_font_montserrat_12, mint);
     label(page, title, &lv_font_montserrat_24);
     return page;
 }

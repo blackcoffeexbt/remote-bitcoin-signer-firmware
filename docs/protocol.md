@@ -4,6 +4,33 @@ This is a project-specific protocol, not NIP-46. Both directions use signed NIP-
 
 Validate the event hash, Schnorr signature, author, recipient, kind and timestamps before decrypting. Firmware only accepts unpaired senders while its local pairing window is open. NIP-44 authenticates ciphertext; it does not conceal routing metadata from relays or provide forward secrecy.
 
+## Bitcoin network
+
+`network` is `Mainnet` or `Testnet4`. Firmware defaults to Mainnet and fixes
+its network at build time (`[bitcoin] testnet4 = 0` or `1` in platformio.ini);
+no device setting, portal field or protocol method can change it. Mobile defaults
+to Mainnet and persists its choice in Settings > Bitcoin network.
+
+Mainnet uses BIP84 `m/84'/0'/0'`, standard `xpub`, and `bc1` addresses;
+Testnet4 uses `m/84'/1'/0'`, standard `tpub`, and `tb1` addresses. Descriptor
+origins match those paths. The examples below use Testnet4; the identical
+contract applies to Mainnet with its network name and account path.
+
+After authenticating and freshness/replay-checking a supported-network request,
+firmware rejects a network mismatch before pairing, PIN verification or signing.
+Its bound error response carries the **firmware's** network. Mobile may use an
+authenticated, fully request-bound error from the other supported network only
+to explain a mismatch and fail the request; cross-network success/progress is
+never accepted and the app never automatically changes network. Each sign
+refreshes and validates the public account against the selected network before
+sending `sign_psbt`. Older Testnet4 firmware silently ignores wrong-network
+requests; a timeout also directs the user to check the network setting.
+
+After installing firmware built for another network, cached public metadata
+cannot be returned until a local wallet unlock refreshes it. Existing account
+pinning still requires deliberate pairing if the xpub changes. Seeds, PINs,
+pairings and approval-policy storage are not erased or reset by this change.
+
 ## Request
 
 ```json
