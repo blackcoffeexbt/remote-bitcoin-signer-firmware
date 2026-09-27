@@ -4,20 +4,31 @@
 #include "argus_logo.h"
 #include "lnbits_logo.h"
 
-// Shared Argus light styling for the 320 x 480 display.
+// Shared Argus theme styling for the 320 x 480 display.
 namespace DeviceUI {
 constexpr int width = 320, height = 480, inset = 16, contentWidth = width - inset * 2;
 constexpr int numericKeyboardHeight = 240, textKeyboardHeight = 200;
-constexpr uint32_t background = 0xF5F8F7, surface = 0xFFFFFF, raised = 0xE6F1EE;
-constexpr uint32_t border = 0xD6E3E0, mint = 0x006C67, mintPressed = 0x005550;
-constexpr uint32_t text = 0x142D36, muted = 0x506770, onAccent = 0xFFFFFF;
-constexpr uint32_t danger = 0xA12D39, dangerSurface = 0xFCECEE;
+inline uint32_t background = 0xF5F8F7, surface = 0xFFFFFF, raised = 0xE6F1EE;
+inline uint32_t border = 0xD6E3E0, mint = 0x006C67, mintPressed = 0x005550;
+inline uint32_t text = 0x142D36, muted = 0x506770, onAccent = 0xFFFFFF;
+inline uint32_t danger = 0xA12D39, dangerSurface = 0xFCECEE;
 enum class Tone { Primary, Secondary, Danger };
 
-inline void init() {
+inline void init(bool dark = false) {
+    background = dark ? 0x101C22 : 0xF5F8F7;
+    surface = dark ? 0x1B2B32 : 0xFFFFFF;
+    raised = dark ? 0x293E45 : 0xE6F1EE;
+    border = dark ? 0x40575F : 0xD6E3E0;
+    mint = dark ? 0x78DAC5 : 0x006C67;
+    mintPressed = dark ? 0x50BCA7 : 0x005550;
+    text = dark ? 0xEDF5F3 : 0x142D36;
+    muted = dark ? 0xB0C4CB : 0x506770;
+    onAccent = dark ? 0x102C28 : 0xFFFFFF;
+    danger = dark ? 0xFFADB6 : 0xA12D39;
+    dangerSurface = dark ? 0x442630 : 0xFCECEE;
     auto display = lv_disp_get_default();
     lv_disp_set_theme(display,
-                      lv_theme_default_init(display, lv_color_hex(mint), lv_color_hex(raised), false,
+                      lv_theme_default_init(display, lv_color_hex(mint), lv_color_hex(raised), dark,
                                             &lv_font_montserrat_16));
 }
 inline lv_obj_t *label(lv_obj_t *parent, const char *value,

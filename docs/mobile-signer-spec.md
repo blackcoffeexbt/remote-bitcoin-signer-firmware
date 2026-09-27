@@ -127,6 +127,13 @@ signing cannot interrupt an open settings session. Revocation rejects future
 requests and cancels pending work from that client. Forgetting browser storage
 does not revoke the device pairing. Old approval callbacks are request-ID-bound.
 
+Settings → Display stores brightness (10–100%), display timeout (15/30/60/120/300
+seconds), a Disable timeout checkbox, and Light/Dark theme. Save applies the
+preferences and retains them across reboot. Defaults are full brightness,
+30 seconds with timeout enabled, and Light. Display timeout is independent of
+settings authorization and recovery-phrase expiry; disabling it does not extend
+either security limit. These preferences are local-only and add no wire methods.
+
 Settings → Keys → View recovery phrase is a local-only viewer for the stored
 12/24-word phrase. It requires settings authorization plus a fresh wallet-PIN
 verification using the shared wallet attempt counter/cooldown. It does not open

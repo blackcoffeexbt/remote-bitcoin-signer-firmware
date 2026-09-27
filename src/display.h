@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "display_preferences.h"
 #include <Arduino_GFX_Library.h>
 #include <lvgl.h>
 #include "pincfg.h"
@@ -23,6 +24,8 @@ namespace Display {
     void cleanup();
     void setRotation(int rotation);
     
+    void applyPreferences(const DisplayPreferences::State &state);
+
     // Power management
     void turnOffBacklight();
     void turnOnBacklight();

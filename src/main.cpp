@@ -1,4 +1,5 @@
 #include "device_ui.h"
+#include "device_settings.h"
 #include "display.h"
 #include "engine.h"
 #include "wallet.h"
@@ -10,6 +11,8 @@
 namespace {
 lv_obj_t *page = nullptr, *keyboard = nullptr, *statusLabel = nullptr;
 lv_obj_t *input1 = nullptr, *input2 = nullptr, *input3 = nullptr;
+lv_obj_t *brightnessSlider = nullptr, *brightnessLabel = nullptr;
+lv_obj_t *timeoutChoice = nullptr, *disableTimeout = nullptr, *themeChoice = nullptr;
 String phrase, requestId;
 char recoveryDisplay[512] = {};
 bool recoveryVisible = false, recoveryRequested = false;
@@ -269,6 +272,8 @@ void settingsMenu(const String &text = "") {
     DeviceUI::endorsedBrand(page, true);
     if (text.length())
         label(text);
+    navigation("Display", "Brightness, timeout and theme", LV_SYMBOL_IMAGE,
+               [](lv_event_t *) { send("display_settings"); });
     navigation("Network", "Wi-Fi and Nostr relays", LV_SYMBOL_WIFI,
                [](lv_event_t *) { send("network_setup"); });
     navigation("Auto signing policies", "Transaction and daily limits", LV_SYMBOL_OK,
@@ -375,6 +380,71 @@ void showRecovery(const String &recovery) {
     button("Done", [](lv_event_t *) { hideRecovery(); });
     recoveryShownAt = millis();
     recoveryVisible = true;
+}
+void displaySettings(const String &text, const String &message) {
+    const auto prefs = DeviceSettings::parseDisplay(text);
+    Display::applyPreferences(prefs);
+    DeviceUI::init(prefs.dark);
+    screen("Display");
+    brightnessLabel = DeviceUI::label(page, "");
+    lv_label_set_text_fmt(brightnessLabel, "Brightness: %u%%", unsigned(prefs.brightness));
+    brightnessSlider = lv_slider_create(page);
+    lv_obj_set_width(brightnessSlider, DeviceUI::contentWidth - 32);
+    lv_slider_set_range(brightnessSlider, 10, 100);
+    lv_slider_set_value(brightnessSlider, prefs.brightness, LV_ANIM_OFF);
+    lv_obj_add_event_cb(brightnessSlider, [](lv_event_t *) {
+        lv_label_set_text_fmt(brightnessLabel, "Brightness: %d%%",
+                              int(lv_slider_get_value(brightnessSlider)));
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    label("Display timeout");
+    timeoutChoice = lv_dropdown_create(page);
+    lv_obj_set_width(timeoutChoice, DeviceUI::contentWidth);
+    lv_dropdown_set_options(timeoutChoice, "15 seconds\n30 seconds\n1 minute\n2 minutes\n5 minutes");
+    for (unsigned i = 0; i < sizeof(DisplayPreferences::timeouts) / sizeof(uint16_t); ++i)
+        if (DisplayPreferences::timeouts[i] == prefs.timeoutSeconds)
+            lv_dropdown_set_selected(timeoutChoice, i);
+    disableTimeout = lv_checkbox_create(page);
+    lv_checkbox_set_text(disableTimeout, "Disable timeout");
+    lv_obj_set_width(disableTimeout, DeviceUI::contentWidth);
+    lv_obj_set_style_text_color(disableTimeout, lv_color_hex(DeviceUI::onAccent),
+                                LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (prefs.timeoutDisabled) {
+        lv_obj_add_state(disableTimeout, LV_STATE_CHECKED);
+        lv_obj_add_state(timeoutChoice, LV_STATE_DISABLED);
+    }
+    lv_obj_add_event_cb(disableTimeout, [](lv_event_t *) {
+        if (lv_obj_has_state(disableTimeout, LV_STATE_CHECKED))
+            lv_obj_add_state(timeoutChoice, LV_STATE_DISABLED);
+        else
+            lv_obj_clear_state(timeoutChoice, LV_STATE_DISABLED);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    label("Theme");
+    themeChoice = lv_dropdown_create(page);
+    lv_obj_set_width(themeChoice, DeviceUI::contentWidth);
+    lv_dropdown_set_options(themeChoice, "Light\nDark");
+    lv_dropdown_set_selected(themeChoice, prefs.dark ? 1 : 0);
+    for (auto choice : {timeoutChoice, themeChoice}) {
+        lv_obj_set_style_bg_color(choice, lv_color_hex(DeviceUI::surface), 0);
+        lv_obj_set_style_text_color(choice, lv_color_hex(DeviceUI::text), 0);
+        auto list = lv_dropdown_get_list(choice);
+        lv_obj_set_style_bg_color(list, lv_color_hex(DeviceUI::surface), 0);
+        lv_obj_set_style_text_color(list, lv_color_hex(DeviceUI::text), 0);
+        lv_obj_set_style_text_color(list, lv_color_hex(DeviceUI::onAccent),
+                                    LV_PART_SELECTED | LV_STATE_CHECKED);
+    }
+    DeviceUI::label(page, "Changes apply when saved. Security locks stay active.",
+                     &lv_font_montserrat_14, DeviceUI::muted);
+    if (message.length()) label(message);
+    button("Save display settings", [](lv_event_t *) {
+        DisplayPreferences::State updated;
+        updated.brightness = lv_slider_get_value(brightnessSlider);
+        updated.timeoutSeconds = DisplayPreferences::timeouts[lv_dropdown_get_selected(timeoutChoice)];
+        updated.timeoutDisabled = lv_obj_has_state(disableTimeout, LV_STATE_CHECKED);
+        updated.dark = lv_dropdown_get_selected(themeChoice) == 1;
+        send("display_save", DeviceSettings::displayJson(updated));
+    });
+    button("Back to Settings", [](lv_event_t *) { send("settings_open"); },
+           DeviceUI::Tone::Secondary);
 }
 void autoSettings(const String &text, const String &message) {
     DynamicJsonDocument d(512);
@@ -556,6 +626,8 @@ void handle(Engine::Message &m) {
         settingsPin(true);
     } else if (m.type == "settings_pin" || m.type == "settings_migrate") {
         settingsPin(false, m.type == "settings_migrate", m.text);
+    } else if (m.type == "display_settings") {
+        displaySettings(m.text, m.data);
     } else if (m.type == "auto_settings") {
         autoSettings(m.text, m.data);
     } else if (m.type == "welcome") {
@@ -663,7 +735,7 @@ void setup() {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     Display::init();
-    DeviceUI::init();
+    DeviceUI::init(DeviceSettings::loadDisplay().dark);
     screen("Starting Argus...");
     DeviceUI::endorsedBrand(page);
     lv_refr_now(nullptr);

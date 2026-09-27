@@ -125,6 +125,23 @@ This builds the latest normal firmware and refuses to proceed unless the partiti
 
 The reference project is unchanged. Its ArduinoGFX/AXS15231B display and touch implementation, LVGL configuration, and Nostr transport libraries are reused here. Dependencies are pinned; public TLS trust roots are included in `data/cert/`.
 
+## Display preferences
+
+Open **Settings → Display** after entering the settings PIN. Adjust brightness
+from 10–100%, choose a timeout (15 seconds, 30 seconds, 1, 2 or 5 minutes), check
+**Disable timeout** to keep the backlight on, and choose **Light** or **Dark**.
+Tap **Save display settings** to apply and persist all choices across restarts;
+Back to Settings discards unsaved changes. Defaults are 100% brightness,
+30 seconds with timeout enabled, and Light. A touch wakes the screen at the saved
+brightness; the wake gesture is consumed so it cannot activate a hidden control.
+Display preferences do not disable the settings session lock or recovery-phrase
+reveal limit.
+
+Hardware verification remains necessary: check brightness at both endpoints,
+all timeout choices and disabled timeout, wake-touch consumption, persistence
+after restart, and both themes on settings, PIN/keypad, transaction review and
+recovery screens. No device is flashed by the build or native checks.
+
 ## First use with LNbits (alternative client)
 
 For the standalone mobile wallet, follow the [in-app wallet flow](../mobile/README.md#working-wallet-flow).
@@ -172,6 +189,8 @@ signing comparison uses that checkout's `wallycore` environment and test vectors
 ```sh
 python3 scripts/test-native.py
 tests/generated/native/mainnet/validator --dice
+clang++ -std=c++17 -fsanitize=address,undefined tests/display-preferences.cpp -o /tmp/display-preferences-tests
+/tmp/display-preferences-tests
 clang++ -std=c++17 -fsanitize=address,undefined tests/recovery-view.cpp -o /tmp/recovery-view-tests
 /tmp/recovery-view-tests
 ../lnbits/.venv/bin/python tests/test_signing.py

@@ -579,6 +579,13 @@ static void command(Message &m) {
             wipe(transport);
             throw;
         }
+    } else if (m.type == "display_settings" || m.type == "display_save") {
+        requireSettings();
+        require(!pending.id.length(), "Finish the active request first");
+        if (m.type == "display_save")
+            DeviceSettings::saveDisplay(DeviceSettings::parseDisplay(m.text));
+        post("display_settings", DeviceSettings::displayJson(DeviceSettings::loadDisplay()),
+             m.type == "display_save" ? "Display settings saved" : "");
     } else if (m.type == "auto_settings" || m.type == "auto_save") {
         requireSettings();
         require(!pending.id.length(), "Finish the active request first");

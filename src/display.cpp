@@ -1,5 +1,6 @@
 #include "display.h"
 #include "engine.h"
+#include "device_settings.h"
 
 #include <Arduino.h>
 
@@ -31,9 +32,15 @@ namespace Display {
     // Backlight timeout management
     static unsigned long last_activity_time = 0;
     static bool backlight_on = true;
-    static const unsigned long BACKLIGHT_TIMEOUT = 30000; // 30 seconds
-    // EVENT_SIGNING_BACKLIGHT_TIMEOUT to turn on backlight during signing
-    static const unsigned long EVENT_SIGNING_BACKLIGHT_TIMEOUT = 5000; // 5 seconds
+    static DisplayPreferences::State preferences;
+    static bool signingWake = false;
+    static constexpr uint8_t backlightChannel = 0;
+
+    void applyPreferences(const DisplayPreferences::State &state) {
+        preferences = state;
+        resetBacklightTimeout();
+        turnOnBacklight();
+    }
 
     void init() {
         Serial.println("=== Initializing ArduinoGFX display ===");
@@ -55,7 +62,9 @@ namespace Display {
             Serial.println("Display initialized successfully");
             
             // Initialize backlight pin and turn on backlight
-            pinMode(TFT_BL, OUTPUT);
+            preferences = DeviceSettings::loadDisplay();
+            ledcSetup(backlightChannel, 5000, 8);
+            ledcAttachPin(TFT_BL, backlightChannel);
             turnOnBacklight();
             initBacklightTimeout();
             
@@ -352,13 +361,12 @@ namespace Display {
     
     void turnOffBacklight() {
         Serial.println("Turning off display backlight");
-        digitalWrite(TFT_BL, LOW);
+        ledcWrite(backlightChannel, 0);
         backlight_on = false;
     }
     
     void turnOnBacklight() {
-        Serial.println("Turning on display backlight");
-        digitalWrite(TFT_BL, HIGH);
+        ledcWrite(backlightChannel, (uint32_t(preferences.brightness) * 255U + 50U) / 100U);
         backlight_on = true;
     }
 
@@ -370,22 +378,23 @@ namespace Display {
         Serial.println("Turning on backlight for signing event");
         turnOnBacklight();
         resetBacklightTimeout();
-        last_activity_time -= (BACKLIGHT_TIMEOUT - EVENT_SIGNING_BACKLIGHT_TIMEOUT);
+        signingWake = true;
     }
     
     // Backlight timeout management functions
     void initBacklightTimeout() {
         last_activity_time = millis();
         backlight_on = true;
-        Serial.println("Backlight timeout initialized - 60 second timeout");
+        signingWake = false;
     }
     
     void resetBacklightTimeout() {
+        signingWake = false;
         last_activity_time = millis();
     }
     
     void checkBacklightTimeout() {
-        if (backlight_on && (millis() - last_activity_time > BACKLIGHT_TIMEOUT)) {
+        if (backlight_on && DisplayPreferences::expired(preferences, millis(), last_activity_time, signingWake)) {
             Serial.println("Backlight timeout reached - turning off backlight");
             turnOffBacklight();
         }
