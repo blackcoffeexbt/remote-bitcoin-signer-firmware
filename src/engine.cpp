@@ -713,7 +713,7 @@ static void run(void *) {
         return;
     }
 #endif
-    Serial.println("Bitcoin signer worker ready");
+    Serial.println("Argus signing worker ready");
     try {
         failures = loadFailures("wallet");
         settingsFailures = loadFailures("settings");

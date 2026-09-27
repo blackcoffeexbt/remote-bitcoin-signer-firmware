@@ -1,15 +1,15 @@
 #pragma once
 static const char networkPortalPage[] = R"HTML(<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bitcoin signer setup</title>
+<title>Argus setup</title>
 <style>
 [hidden]{display:none!important}
-body{font:17px system-ui;background:#16181b;color:#f5f5f5;max-width:460px;margin:32px auto;padding:20px}
-label{display:block;margin:22px 0 8px}input,textarea,button,select{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:8px;border:1px solid #777}
-button{margin-top:16px;background:#ff9900;color:#111;font-weight:600}button:disabled{opacity:.6}p{line-height:1.5}small{color:#ccc}
+body{font:17px system-ui;background:#F5F8F7;color:#142D36;max-width:460px;margin:32px auto;padding:20px}
+label{display:block;margin:22px 0 8px}input,textarea,button,select{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:8px;border:1px solid #D6E3E0;background:#FFFFFF;color:#142D36}
+button{margin-top:16px;background:#006C67;color:#FFFFFF;font-weight:600}button:disabled{opacity:.6}p{line-height:1.5}small{color:#506770}
 .toggle{display:flex;align-items:center;gap:10px;margin:12px 0}.toggle input{width:auto}#scan-status{font-size:15px}
 </style>
-<h1>Wi-Fi &amp; Nostr relays</h1><p>Connect your signer to a 2.4 GHz Wi-Fi network and add up to three relays.</p>
+<h1>Argus</h1><h2>Wi-Fi &amp; Nostr relays</h2><p>Connect your Argus signer to a 2.4 GHz Wi-Fi network and add up to three relays.</p>
 <form method="post" action="/save">
 <input id="token" type="hidden" name="token" value="{{TOKEN}}">
 <button id="scan" type="button">Scan for Wi-Fi</button>

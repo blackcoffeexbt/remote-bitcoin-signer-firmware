@@ -254,6 +254,7 @@ void verifySeed(unsigned word = 1) {
 }
 void settingsMenu(const String &text = "") {
     screen("Settings");
+    DeviceUI::brand(page);
     if (text.length())
         label(text);
     navigation("Network", "Wi-Fi and Nostr relays", LV_SYMBOL_WIFI,
@@ -340,6 +341,7 @@ void autoSettings(const String &text, const String &message) {
 }
 void lockScreen(const String &text) {
     screen("Ready to sign");
+    DeviceUI::brand(page, true);
     auto badge = DeviceUI::label(page, "WALLET LOCKED", &lv_font_montserrat_14, DeviceUI::mint);
     DeviceUI::statusStyle(badge);
     if (text.length())
@@ -351,7 +353,8 @@ void lockScreen(const String &text) {
     button("Settings", [](lv_event_t *) { send("settings_open"); }, DeviceUI::Tone::Secondary);
 }
 void welcome() {
-    screen("Testnet4 Bitcoin signer");
+    screen("Welcome to Argus");
+    DeviceUI::brand(page, true);
     label("Create a new wallet or restore a recovery phrase. This prototype only signs Testnet4 "
           "transactions.");
     button("Generate wallet", [](lv_event_t *) { send("generate"); });
@@ -520,7 +523,10 @@ void setup() {
     WiFi.mode(WIFI_STA);
     Display::init();
     DeviceUI::init();
-    screen("Starting Bitcoin signer...");
+    screen("Starting Argus...");
+    DeviceUI::brand(page, true);
+    DeviceUI::label(page, "Remote access. Secret secured.", &lv_font_montserrat_14, DeviceUI::muted);
+    lv_timer_handler();
     if (!Engine::start())
         status("Cannot start signing worker. Restart device.");
 }

@@ -141,7 +141,7 @@ class NetworkPortal {
         uint8_t random[16];
         esp_fill_random(random, sizeof(random));
         token = toHex(random, sizeof(random));
-        String ssid = "Bitcoin-Signer-" + token.substring(0, 6);
+        String ssid = "Argus-" + token.substring(0, 6);
         String password = token.substring(8, 24);
         WiFi.mode(WIFI_AP_STA);
         const IPAddress address(192, 168, 4, 1);
@@ -170,7 +170,7 @@ class NetworkPortal {
         server->on("/scan", HTTP_GET, [this]() { scan(false); });
         server->on("/save", HTTP_POST, [this]() { save(); });
         server->onNotFound(
-            [this]() { respond(404, "Open http://192.168.4.1/ to configure the signer."); });
+            [this]() { respond(404, "Open http://192.168.4.1/ to configure Argus."); });
         server->begin();
         DynamicJsonDocument details(512);
         details["ssid"] = ssid;

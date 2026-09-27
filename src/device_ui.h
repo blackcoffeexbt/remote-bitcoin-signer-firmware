@@ -1,20 +1,21 @@
 #pragma once
 #include <lvgl.h>
+#include "argus_logo.h"
 
-// Shared, code-native Slate & Mint styling for the 320 x 480 display.
+// Shared Argus light styling for the 320 x 480 display.
 namespace DeviceUI {
 constexpr int width = 320, height = 480, inset = 16, contentWidth = width - inset * 2;
 constexpr int numericKeyboardHeight = 240, textKeyboardHeight = 200;
-constexpr uint32_t background = 0x141F2B, surface = 0x202F3F, raised = 0x2B4053;
-constexpr uint32_t border = 0x3A5063, mint = 0x9AE6CE, mintPressed = 0x77CDB2;
-constexpr uint32_t text = 0xF0F5F8, muted = 0xB1C0CF, ink = 0x142F2A;
-constexpr uint32_t danger = 0xFFB0AC, dangerSurface = 0x402E38;
+constexpr uint32_t background = 0xF5F8F7, surface = 0xFFFFFF, raised = 0xE6F1EE;
+constexpr uint32_t border = 0xD6E3E0, mint = 0x006C67, mintPressed = 0x005550;
+constexpr uint32_t text = 0x142D36, muted = 0x506770, onAccent = 0xFFFFFF;
+constexpr uint32_t danger = 0xA12D39, dangerSurface = 0xFCECEE;
 enum class Tone { Primary, Secondary, Danger };
 
 inline void init() {
     auto display = lv_disp_get_default();
     lv_disp_set_theme(display,
-                      lv_theme_default_init(display, lv_color_hex(mint), lv_color_hex(raised), true,
+                      lv_theme_default_init(display, lv_color_hex(mint), lv_color_hex(raised), false,
                                             &lv_font_montserrat_16));
 }
 inline lv_obj_t *label(lv_obj_t *parent, const char *value,
@@ -27,6 +28,20 @@ inline lv_obj_t *label(lv_obj_t *parent, const char *value,
     lv_obj_set_style_text_line_space(obj, 4, 0);
     lv_label_set_text(obj, value);
     return obj;
+}
+inline lv_obj_t *brand(lv_obj_t *parent, bool large = false) {
+    auto row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, contentWidth, large ? 110 : 44);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    auto image = lv_img_create(row);
+    lv_img_set_src(image, &argusLogoImage());
+    lv_img_set_zoom(image, large ? 256 : 107);
+    lv_obj_align(image, LV_ALIGN_LEFT_MID, large ? 0 : -28, 0);
+    auto name = label(row, "Argus", &lv_font_montserrat_28);
+    lv_obj_set_width(name, 170);
+    lv_obj_align(name, LV_ALIGN_LEFT_MID, large ? 110 : 54, 0);
+    return row;
 }
 inline lv_obj_t *screen(const char *title) {
     lv_obj_clean(lv_scr_act());
@@ -47,7 +62,7 @@ inline lv_obj_t *screen(const char *title) {
     lv_obj_set_style_bg_color(page, lv_color_hex(border), LV_PART_SCROLLBAR);
     lv_obj_set_style_width(page, 3, LV_PART_SCROLLBAR);
     lv_obj_set_style_radius(page, 2, LV_PART_SCROLLBAR);
-    label(page, "TESTNET4  /  BITCOIN SIGNER", &lv_font_montserrat_12, mint);
+    label(page, "ARGUS  /  TESTNET4", &lv_font_montserrat_12, mint);
     label(page, title, &lv_font_montserrat_24);
     return page;
 }
@@ -62,7 +77,7 @@ inline void buttonStyle(lv_obj_t *button, Tone tone = Tone::Primary) {
     lv_obj_set_style_transform_width(button, 0, LV_STATE_PRESSED);
     lv_obj_set_style_transform_height(button, 0, LV_STATE_PRESSED);
     const auto fill = tone == Tone::Primary ? mint : tone == Tone::Danger ? dangerSurface : surface;
-    const auto foreground = tone == Tone::Primary ? ink : tone == Tone::Danger ? danger : text;
+    const auto foreground = tone == Tone::Primary ? onAccent : tone == Tone::Danger ? danger : text;
     lv_obj_set_style_bg_color(button, lv_color_hex(fill), 0);
     lv_obj_set_style_bg_color(button, lv_color_hex(tone == Tone::Primary ? mintPressed : raised),
                               LV_STATE_PRESSED);
@@ -151,7 +166,7 @@ inline void keyboardStyle(lv_obj_t *keyboard, bool numeric) {
     lv_obj_set_style_bg_color(keyboard, lv_color_hex(raised), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(keyboard, lv_color_hex(mint), LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(keyboard, lv_color_hex(text), LV_PART_ITEMS);
-    lv_obj_set_style_text_color(keyboard, lv_color_hex(ink), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(keyboard, lv_color_hex(onAccent), LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_set_style_text_font(keyboard, numeric ? &lv_font_montserrat_28 : &lv_font_montserrat_16,
                                LV_PART_ITEMS);
     lv_obj_set_style_border_width(keyboard, 0, LV_PART_ITEMS);

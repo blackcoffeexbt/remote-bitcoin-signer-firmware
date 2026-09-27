@@ -1,4 +1,4 @@
-# Remote Bitcoin Signer: current flow and mobile delivery specification
+# Argus: current flow and mobile delivery specification
 
 Status: corrected client implementation, 26 September 2026. The phone controls
 the existing ESP32 signer. The earlier phone-as-signer proposal and simulation

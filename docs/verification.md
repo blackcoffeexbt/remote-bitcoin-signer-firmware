@@ -76,3 +76,20 @@ This update is built and automatically tested only; physical touch responsivenes
 The shared LVGL theme uses slate surfaces, mint primary actions, rounded settings rows, subdued secondary actions and distinct rejection/error styling. Numeric input uses 28 px text in 64 px fields; the 240 px numeric keyboard uses large keys and 28 px digits. Explanatory text collapses while entering numbers so the active field and next action stay reachable. PIN masking remains immediate, and signing/settings authorization behavior is unchanged.
 
 Representative home, settings and PIN screens were rendered using the installed LVGL library with the production styles and 32 KiB UI heap. The inspected screens retained at least 14 KiB of free UI heap. Normal firmware builds successfully. Previews are in `output/slate-mint/`. This update has not been flashed; visual and touch confirmation on the physical display remains pending.
+
+## Argus light identity — 26 September 2026
+
+The Argus device-and-signal mark appears at startup, on the locked home and
+welcome screens, and in Settings. The shared theme now uses cloud/white surfaces,
+ink text, teal actions and readable error colors. The setup portal is also light,
+and its access point is named `Argus-…`. Wire protocol and NVS keys are unchanged.
+
+- `pio run -e esp32-s3-n16r8v` passed: RAM 89,984 / 327,680 bytes;
+  flash 1,853,905 / 6,553,600 bytes.
+- Six network-portal tests and native touch sanitizer tests passed.
+- Representative splash, home, Settings and PIN/keypad views rendered with the
+  actual production LVGL theme and generated logo. Inspected the rendered images
+  in `output/argus/`. Settings remains scrollable; its lowest visible button can
+  be reached by scrolling. Minimum free UI heap among these renders: 13,544 bytes.
+- No hardware was flashed. Physical display/touch checks and device-backed
+  signing/approval interoperability remain unverified by this visual update.
