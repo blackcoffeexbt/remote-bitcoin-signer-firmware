@@ -482,7 +482,7 @@ void autoSettings(const String &text, const String &message) {
 }
 void lockScreen(const String &text) {
     screen("Ready to sign");
-    DeviceUI::brand(page, true);
+    DeviceUI::endorsedBrand(page, true);
     auto badge = DeviceUI::label(page, "WALLET LOCKED", &lv_font_montserrat_14, DeviceUI::mint);
     DeviceUI::statusStyle(badge);
     if (text.length())

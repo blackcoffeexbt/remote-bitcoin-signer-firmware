@@ -14,7 +14,9 @@ inline uint32_t text = 0x142D36, muted = 0x506770, onAccent = 0xFFFFFF;
 inline uint32_t danger = 0xA12D39, dangerSurface = 0xFCECEE;
 enum class Tone { Primary, Secondary, Danger };
 
+inline bool darkMode = false;
 inline void init(bool dark = false) {
+    darkMode = dark;
     background = dark ? 0x101C22 : 0xF5F8F7;
     surface = dark ? 0x1B2B32 : 0xFFFFFF;
     raised = dark ? 0x293E45 : 0xE6F1EE;
@@ -56,8 +58,8 @@ inline lv_obj_t *brand(lv_obj_t *parent, bool large = false) {
     lv_obj_align(name, LV_ALIGN_LEFT_MID, large ? 110 : 54, 0);
     return row;
 }
-// Stacked endorsement for the splash and Settings; the compact form saves room
-// for the settings controls on the device's small display.
+// Stacked endorsement for the splash, Settings and Ready to sign screens.
+// The compact form leaves room for controls on the device's small display.
 inline lv_obj_t *endorsedBrand(lv_obj_t *parent, bool compact = false) {
     auto group = lv_obj_create(parent);
     lv_obj_remove_style_all(group);
@@ -79,7 +81,7 @@ inline lv_obj_t *endorsedBrand(lv_obj_t *parent, bool compact = false) {
     lv_obj_set_style_text_align(by, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(by, LV_ALIGN_TOP_MID, 0, compact ? 48 : 142);
     auto logo = lv_img_create(group);
-    lv_img_set_src(logo, &lnbitsLogoImage());
+    lv_img_set_src(logo, &lnbitsLogoImage(darkMode));
     lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, compact ? 68 : 162);
     return group;
 }
