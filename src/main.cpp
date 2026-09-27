@@ -10,6 +10,8 @@ namespace {
 lv_obj_t *page = nullptr, *keyboard = nullptr, *statusLabel = nullptr;
 lv_obj_t *input1 = nullptr, *input2 = nullptr, *input3 = nullptr;
 String phrase, requestId;
+DiceEntropy::Rolls diceRolls;
+lv_obj_t *diceCount = nullptr, *diceGenerate = nullptr, *dicePad = nullptr;
 unsigned backupWord = 1;
 String backupChoices[4];
 bool configured = false;
@@ -18,6 +20,8 @@ void label(const String &text) {
     DeviceUI::label(page, text.c_str());
 }
 void screen(const String &title) {
+    diceRolls.clear();
+    diceCount = diceGenerate = dicePad = nullptr;
     if (keyboard) {
         lv_obj_del(keyboard);
         keyboard = nullptr;
@@ -153,7 +157,7 @@ bool send(const String &type, const String &text = "", const String &data = "",
     }
     if (keyboard)
         lv_obj_add_state(keyboard, LV_STATE_DISABLED);
-    if (type == "generate")
+    if (type == "generate" || type == "generate_dice")
         status("Generating your recovery phrase...");
     else if (type == "create")
         status("Creating your wallet...");
@@ -352,12 +356,86 @@ void lockScreen(const String &text) {
                     &lv_font_montserrat_14, DeviceUI::muted);
     button("Settings", [](lv_event_t *) { send("settings_open"); }, DeviceUI::Tone::Secondary);
 }
+void welcome();
+void generationOptions();
+void updateDice() {
+    String text = String(diceRolls.size()) + " / 50 rolls";
+    if (diceRolls.size())
+        text += String("  |  Last: ") + diceRolls.data()[diceRolls.size() - 1];
+    if (diceRolls.size() == DiceEntropy::maximum)
+        text += " (max)";
+    lv_label_set_text(diceCount, text.c_str());
+    if (diceRolls.size() >= DiceEntropy::minimum)
+        lv_obj_clear_state(diceGenerate, LV_STATE_DISABLED);
+    else
+        lv_obj_add_state(diceGenerate, LV_STATE_DISABLED);
+}
+void diceEntry() {
+    screen("Add dice rolls");
+    lv_obj_add_flag(lv_obj_get_child(page, 0), LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_pad_row(page, 4, 0);
+    lv_obj_set_style_pad_top(page, 12, 0);
+    lv_obj_set_style_pad_bottom(page, 12, 0);
+    DeviceUI::label(page, "Roll a die; tap each result.\n50-256 rolls required.",
+                    &lv_font_montserrat_14, DeviceUI::muted);
+    diceCount = DeviceUI::label(page, "0 / 50 rolls");
+    static const char *keys[] = {"1", "2", "3", "\n", "4", "5", "6", "\n", "Undo", ""};
+    dicePad = lv_btnmatrix_create(page);
+    DeviceUI::keyboardStyle(dicePad, true);
+    lv_obj_set_size(dicePad, DeviceUI::contentWidth, 144);
+    lv_obj_set_style_pad_all(dicePad, 2, 0);
+    lv_obj_set_style_pad_row(dicePad, 2, 0);
+    lv_btnmatrix_set_map(dicePad, keys);
+    lv_btnmatrix_set_btn_ctrl_all(dicePad, LV_BTNMATRIX_CTRL_NO_REPEAT |
+                                              LV_BTNMATRIX_CTRL_CLICK_TRIG);
+    lv_obj_add_event_cb(dicePad, [](lv_event_t *e) {
+        auto pad = lv_event_get_target(e);
+        auto selected = lv_btnmatrix_get_selected_btn(pad);
+        if (selected < 6)
+            diceRolls.add('1' + selected);
+        else if (selected == 6)
+            diceRolls.undo();
+        updateDice();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    diceGenerate = DeviceUI::button(page, "Generate with dice");
+    lv_obj_add_state(diceGenerate, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(diceGenerate, [](lv_event_t *) {
+        if (!DiceEntropy::valid(diceRolls.data(), diceRolls.size()))
+            return;
+        String rolls(diceRolls.data());
+        bool queued = send("generate_dice", rolls);
+        Wallet::wipe(rolls);
+        if (queued) {
+            diceRolls.clear();
+            lv_label_set_text(diceCount, "Rolls added");
+            lv_obj_add_state(dicePad, LV_STATE_DISABLED);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+    button("Cancel and discard", [](lv_event_t *) { generationOptions(); },
+           DeviceUI::Tone::Secondary);
+}
+void generationOptions() {
+    screen("Generate wallet");
+    label("Create a 12-word recovery phrase. Write it down and keep it safe.");
+    button("Generate recovery phrase", [](lv_event_t *) { send("generate"); });
+    navigation("Advanced", "Generate from physical dice", LV_SYMBOL_SETTINGS,
+               [](lv_event_t *) {
+        screen("Advanced");
+        label("Generate using only dice rolls. The same rolls in the same order produce the same "
+              "12-word recovery phrase on compatible tools.");
+        label("Use a fair six-sided die and at least 50 fresh rolls. Do not invent a sequence. "
+              "Keep your rolls secret, like your recovery phrase.");
+        button("Add dice rolls", [](lv_event_t *) { diceEntry(); });
+        button("Back", [](lv_event_t *) { generationOptions(); }, DeviceUI::Tone::Secondary);
+    });
+    button("Back", [](lv_event_t *) { welcome(); }, DeviceUI::Tone::Secondary);
+}
 void welcome() {
     screen("Welcome to Argus");
     DeviceUI::brand(page, true);
     label("Create a new wallet or restore a recovery phrase. This prototype only signs Testnet4 "
           "transactions.");
-    button("Generate wallet", [](lv_event_t *) { send("generate"); });
+    button("Generate wallet", [](lv_event_t *) { generationOptions(); });
     button("Restore wallet", [](lv_event_t *) {
         screen("Restore recovery phrase");
         label("Enter 12 or 24 words. No passphrase.");
@@ -401,6 +479,8 @@ void handle(Engine::Message &m) {
         status(m.text);
         return; // Keep controls disabled until the worker finishes the command.
     }
+    if (dicePad)
+        lv_obj_clear_state(dicePad, LV_STATE_DISABLED);
     if (keyboard)
         lv_obj_clear_state(keyboard, LV_STATE_DISABLED);
     for (uint32_t i = 0; i < lv_obj_get_child_cnt(page); i++) {
@@ -409,6 +489,8 @@ void handle(Engine::Message &m) {
             lv_obj_check_type(child, &lv_textarea_class))
             lv_obj_clear_state(child, LV_STATE_DISABLED);
     }
+    if (diceGenerate)
+        updateDice();
     if (m.type == "settings") {
         settingsMenu(m.text);
     } else if (m.type == "settings_setup") {

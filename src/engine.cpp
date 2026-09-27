@@ -556,10 +556,13 @@ static void command(Message &m) {
         }
         post("auto_settings", DeviceSettings::policyJson(policy),
              m.type == "auto_save" ? "Limits saved" : "");
-    } else if (m.type == "generate") {
+    } else if (m.type == "generate" || m.type == "generate_dice") {
         require(DeviceSettings::hasPin(), "Set your settings PIN first");
         require(!exists(), "Wallet already configured");
-        post("seed", generate());
+        require(m.type != "generate_dice" || DiceEntropy::valid(m.text.c_str(), m.text.length()),
+                "Enter 50-256 dice rolls (1-6)");
+        post("seed", m.type == "generate_dice" ? generate(m.text.c_str(), m.text.length())
+                                                : generate());
     } else if (m.type == "create") {
         require(DeviceSettings::hasPin(), "Set your settings PIN first");
         require(!exists(), "Wallet already configured");

@@ -23,6 +23,37 @@ clients using signed, NIP-44 encrypted Nostr messages.
 **Testnet4 only.** This is experimental firmware. Automated tests and successful
 builds do not establish physical-device security or end-to-end interoperability.
 
+## Optional dice generation
+
+Choose **Generate wallet → Advanced → Add dice rolls**. Roll a fair six-sided die
+and enter each result in order using the 1–6 keypad. The counter shows progress
+and the last result; **Undo** removes the last entry. **Generate with dice** stays
+disabled below 50 rolls; the firmware independently enforces 50–256 rolls.
+Cancel discards the rolls. Continue through the normal 12-word backup verification
+and wallet PIN setup.
+
+Dice mode uses **only the rolls**, with no device randomness, salt or timestamp.
+For reproducibility, concatenate the exact digits `1`–`6` as ASCII, with **no
+spaces, separators or trailing newline**; compute SHA-256, take the **first 16
+bytes** of the digest, then encode these as an English BIP39 12-word mnemonic
+with its normal checksum. BIP39 passphrase is empty; the Testnet4 account is
+`m/84'/1'/0'`. Other tools must use this exact conversion to reproduce the wallet;
+“dice mode” alone does not imply compatibility. Independent Nostr identity and
+PIN-encrypted vault storage still use randomness and are not reproduced.
+
+Use fresh physical rolls, not an invented sequence. Keep the sequence secret:
+it can recreate the wallet. Rolls stay on the device, are not logged or saved,
+and transient input is wiped after submission, cancellation or leaving the page.
+Standard generation remains available and uses device randomness.
+
+Public test fixture (never use for a wallet): `123456` repeated eight times,
+followed by `12` (50 rolls), gives entropy `ee72ae915a4e6ea7ccbeb8e5e5eecef2` and
+`unveil nice picture region tragic fault cream strike tourist control recipe tourist`.
+
+Physical UI checks still required: confirm generation is unavailable at 49 rolls,
+available at 50, and disabled again after Undo; check the 256-roll cap, cancellation,
+repeat-sequence recovery, and the complete backup/PIN flow on the touchscreen.
+
 ## Requirements and quick start
 
 Install PlatformIO Core or the PlatformIO editor extension. A USB connection to
@@ -108,6 +139,7 @@ signing comparison uses that checkout's `wallycore` environment and test vectors
 
 ```sh
 python3 scripts/test-native.py
+tests/generated/native/validator --dice
 ../lnbits/.venv/bin/python tests/test_signing.py
 clang++ -std=c++17 -fsanitize=address,undefined tests/protocol.cpp -o /tmp/bitcoin-protocol-tests
 /tmp/bitcoin-protocol-tests

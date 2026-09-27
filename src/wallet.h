@@ -1,5 +1,6 @@
 #pragma once
 #include "crypto_cache.h"
+#include "dice_entropy.h"
 #include "signing.h"
 #include "validation.h"
 #include <Arduino.h>
@@ -179,9 +180,13 @@ inline void unlock(const String &pin, String &phrase, String &transport) {
     transport = clear.substring(split + 1);
     wipe(clear);
 }
-inline String generate() {
+inline String generate(const char *rolls = nullptr, size_t count = 0) {
+    require(!rolls || DiceEntropy::valid(rolls, count), "Enter 50-256 dice rolls (1-6)");
     uint8_t entropy[16];
-    esp_fill_random(entropy, sizeof(entropy));
+    if (rolls)
+        DiceEntropy::derive(entropy, rolls, count);
+    else
+        esp_fill_random(entropy, sizeof(entropy));
     String s = mnemonicFromEntropy(entropy, sizeof(entropy));
     nostr::crypto::wipe(entropy, sizeof(entropy));
     return s;

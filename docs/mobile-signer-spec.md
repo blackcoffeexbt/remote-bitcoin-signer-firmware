@@ -52,6 +52,10 @@ must not depend on that checkout being installed. See also [protocol.md](protoco
 1. **Provision:** create a 6–32 digit settings PIN. Continue wallet setup;
    generate 12 words and verify each word from four choices, or restore a valid
    12/24-word BIP39 phrase. Set and confirm a separate 6–32 digit wallet PIN.
+   Optional Generate wallet → Advanced → Add dice rolls uses 50–256 physical
+   die results, with no device randomness: SHA-256 of the ordered ASCII digits
+   (no separators), first 16 bytes → English BIP39. The same sequence reproduces
+   the same phrase; see [README](../README.md#optional-dice-generation).
    Account is native SegWit `m/84'/1'/0'`, no BIP39 passphrase.
 2. **Connect:** Settings requires the settings PIN. Network settings opens a
    temporary password-protected Wi-Fi AP, with credentials/QR and
