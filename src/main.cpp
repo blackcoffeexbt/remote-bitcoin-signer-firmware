@@ -666,7 +666,6 @@ void setup() {
     DeviceUI::init();
     screen("Starting Argus...");
     DeviceUI::endorsedBrand(page);
-    DeviceUI::label(page, "Remote access. Secret secured.", &lv_font_montserrat_14, DeviceUI::muted);
     lv_refr_now(nullptr);
     const uint32_t splashShownAt = millis();
     // Keep the branding visible before the worker can open the next screen.

@@ -506,6 +506,7 @@
                 "BOARD_HAS_PSRAM",
                 "ARDUINO_USB_MODE=1",
                 "ARDUINO_USB_CDC_ON_BOOT=1",
+                "BITCOIN_TESTNET4=1",
                 "LV_CONF_PATH=/Users/mark/projects/lnbits/remote-bitcoin-signer/firmware/src/lv_conf.h",
                 "HAVE_CONFIG_H",
                 "MBEDTLS_CONFIG_FILE=\"mbedtls/esp_config.h\"",
