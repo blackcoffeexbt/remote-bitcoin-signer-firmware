@@ -543,6 +543,38 @@ static void command(Message &m) {
         pairToken = "";
         connectRelays();
         post("home");
+    } else if (m.type == "keys_open" || m.type == "seed_pin" || m.type == "seed_view") {
+        requireSettings();
+        require(exists(), "Create a wallet first");
+        require(!pending.id.length() && !portal.active(), "Finish the active request first");
+        account.close();
+        if (m.type != "seed_view") {
+            post(m.type == "keys_open" ? "keys" : "seed_pin");
+            return;
+        }
+        require((int32_t)(millis() - unlockAfter) >= 0, "Wait before retrying wallet PIN");
+        String recovery, transport;
+        try {
+            post("progress", "Checking wallet PIN... Please wait.");
+            checkPin(false, [&] { unlock(m.text, recovery, transport); });
+            wipe(m.text);
+            wipe(transport);
+            requireSettings(); // Decryption must not outlive settings authorization.
+            noteActivity();
+            // Local display queue only; never publish or cache recovery material on relays.
+            auto result = new Message{"seed_view", recovery, "", ""};
+            wipe(recovery);
+            if (xQueueSend(events, &result, 0) != pdTRUE) {
+                wipe(result->text);
+                delete result;
+                throw std::runtime_error("Display busy; try again");
+            }
+        } catch (...) {
+            wipe(m.text);
+            wipe(recovery);
+            wipe(transport);
+            throw;
+        }
     } else if (m.type == "auto_settings" || m.type == "auto_save") {
         requireSettings();
         require(!pending.id.length(), "Finish the active request first");

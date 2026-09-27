@@ -97,3 +97,12 @@ the per-transaction limit, exceeding the remaining daily allowance, both limits,
 or disabled automatic approval. Debit includes the fee. The same reason appears
 on the device review. LNbits displays the authenticated reason as plain text; signing
 remains pending until device approval and the final signed result.
+
+## Local recovery phrase viewer
+
+Settings → Keys → View recovery phrase is device-only and introduces no wire
+method. It requires the settings PIN and a fresh wallet-PIN check, sharing the
+wallet failure counter, cooldown and wipe policy. It displays the stored 12/24
+words without opening signing keys. Display material is cleared on Hide/Done,
+screen exit or the 60-second reveal timeout. Remote clients cannot request the
+phrase, and signing remains blocked while Settings is open.

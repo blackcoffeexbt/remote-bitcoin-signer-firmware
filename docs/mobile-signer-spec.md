@@ -99,6 +99,13 @@ signing cannot interrupt an open settings session. Revocation rejects future
 requests and cancels pending work from that client. Forgetting browser storage
 does not revoke the device pairing. Old approval callbacks are request-ID-bound.
 
+Settings → Keys → View recovery phrase is a local-only viewer for the stored
+12/24-word phrase. It requires settings authorization plus a fresh wallet-PIN
+verification using the shared wallet attempt counter/cooldown. It does not open
+signing keys. Hide/Done and screen changes clear the owned display buffer; a
+60-second maximum reveal time hides it and requests Settings closure independently
+of touchscreen activity. There is no corresponding remote method.
+
 ## Wire protocol
 
 ### Nostr transport envelope

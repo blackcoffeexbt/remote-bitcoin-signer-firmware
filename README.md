@@ -23,6 +23,23 @@ clients using signed, NIP-44 encrypted Nostr messages.
 **Testnet4 only.** This is experimental firmware. Automated tests and successful
 builds do not establish physical-device security or end-to-end interoperability.
 
+## View your recovery phrase
+
+Open **Settings → Keys → View recovery phrase**. Unlock Settings with the settings
+PIN, then enter the separate **wallet PIN** to reveal the stored 12- or 24-word
+phrase. Incorrect wallet PINs share the existing persistent attempt counter and
+cooldown with signing; the existing 16-failure device-wipe policy applies.
+
+The numbered words appear only on the device. **Hide phrase** or **Done** clears
+the display buffer immediately. Leaving the screen also clears it; after 60
+seconds the viewer hides the words and requests Settings closure, even while
+scrolling. Viewing does not unlock signing keys or expose a remote export method.
+Revealing again requires the wallet PIN again.
+
+Physical checks still required: test a generated 12-word wallet and restored
+24-word wallet, wrong PIN/cooldown, Hide/Done, Settings expiry, the 60-second
+viewer timeout while scrolling, and rejected remote signing during Settings.
+
 ## Optional dice generation
 
 Choose **Generate wallet → Advanced → Add dice rolls**. Roll a fair six-sided die
@@ -140,6 +157,8 @@ signing comparison uses that checkout's `wallycore` environment and test vectors
 ```sh
 python3 scripts/test-native.py
 tests/generated/native/validator --dice
+clang++ -std=c++17 -fsanitize=address,undefined tests/recovery-view.cpp -o /tmp/recovery-view-tests
+/tmp/recovery-view-tests
 ../lnbits/.venv/bin/python tests/test_signing.py
 clang++ -std=c++17 -fsanitize=address,undefined tests/protocol.cpp -o /tmp/bitcoin-protocol-tests
 /tmp/bitcoin-protocol-tests

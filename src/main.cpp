@@ -2,6 +2,7 @@
 #include "display.h"
 #include "engine.h"
 #include "wallet.h"
+#include "recovery_view.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
@@ -10,6 +11,9 @@ namespace {
 lv_obj_t *page = nullptr, *keyboard = nullptr, *statusLabel = nullptr;
 lv_obj_t *input1 = nullptr, *input2 = nullptr, *input3 = nullptr;
 String phrase, requestId;
+char recoveryDisplay[512] = {};
+bool recoveryVisible = false, recoveryRequested = false;
+uint32_t recoveryShownAt = 0;
 DiceEntropy::Rolls diceRolls;
 lv_obj_t *diceCount = nullptr, *diceGenerate = nullptr, *dicePad = nullptr;
 unsigned backupWord = 1;
@@ -20,6 +24,8 @@ void label(const String &text) {
     DeviceUI::label(page, text.c_str());
 }
 void screen(const String &title) {
+    RecoveryView::clear(recoveryDisplay, sizeof(recoveryDisplay));
+    recoveryVisible = recoveryRequested = false;
     diceRolls.clear();
     diceCount = diceGenerate = dicePad = nullptr;
     if (keyboard) {
@@ -143,7 +149,7 @@ bool send(const String &type, const String &text = "", const String &data = "",
         return false;
     }
     const bool checkingPin = type == "settings_unlock" || type == "settings_create" ||
-                             type == "unlock";
+                             type == "unlock" || type == "seed_view";
     if (checkingPin && keyboard) {
         lv_obj_del(keyboard);
         keyboard = nullptr;
@@ -161,6 +167,8 @@ bool send(const String &type, const String &text = "", const String &data = "",
         status("Generating your recovery phrase...");
     else if (type == "create")
         status("Creating your wallet...");
+    else if (type == "seed_view")
+        status("Checking wallet PIN... Please wait.");
     else if (type == "unlock")
         status("Unlocking wallet with your PIN...");
     else if (type == "settings_unlock")
@@ -266,6 +274,8 @@ void settingsMenu(const String &text = "") {
     navigation("Auto signing policies", "Transaction and daily limits", LV_SYMBOL_OK,
                [](lv_event_t *) { send("auto_settings"); });
     if (Wallet::exists()) {
+        navigation("Keys", "View your recovery phrase", LV_SYMBOL_EYE_OPEN,
+                   [](lv_event_t *) { send("keys_open"); });
         navigation("Connect", "Connect a remote control", LV_SYMBOL_PLUS,
                    [](lv_event_t *) { send("pair_code"); });
         navigation("Paired browsers", "Manage connections", LV_SYMBOL_LIST,
@@ -322,6 +332,49 @@ void settingsPin(bool create, bool migration = false, const String &text = "") {
     }
     if (!create || Wallet::exists())
         button("Cancel", [](lv_event_t *) { send("settings_close"); }, DeviceUI::Tone::Secondary);
+}
+void keysMenu() {
+    screen("Keys");
+    label("Your recovery phrase restores your wallet. Keep it private and never share it.");
+    navigation("View recovery phrase", "Wallet PIN required", LV_SYMBOL_EYE_OPEN,
+               [](lv_event_t *) { send("seed_pin"); });
+    button("Back to Settings", [](lv_event_t *) { send("settings_open"); },
+           DeviceUI::Tone::Secondary);
+}
+void recoveryPin() {
+    screen("View recovery phrase");
+    label("Enter your wallet PIN to reveal the words. Make sure nobody can see your screen.");
+    input1 = input("Wallet PIN", true, false, true);
+    button("Reveal phrase", [](lv_event_t *) {
+        String pin = value(input1);
+        recoveryRequested = send("seed_view", pin);
+        Wallet::wipe(pin);
+        lv_textarea_set_text(input1, "");
+    });
+    button("Cancel", [](lv_event_t *) { send("keys_open"); }, DeviceUI::Tone::Secondary);
+}
+void hideRecovery() {
+    // Hide and erase immediately, even if the worker queue is busy.
+    keysMenu();
+}
+void showRecovery(const String &recovery) {
+    if (!recoveryRequested)
+        return; // A queued reveal must never reopen a page that was left or timed out.
+    screen("Recovery phrase");
+    label("Keep these words private. Hides automatically after 60 seconds.");
+    button("Hide phrase", [](lv_event_t *) { hideRecovery(); });
+    if (!RecoveryView::format(recovery.c_str(), recovery.length(), recoveryDisplay,
+                              sizeof(recoveryDisplay))) {
+        keysMenu();
+        status("Unable to display recovery phrase", true);
+        return;
+    }
+    auto words = DeviceUI::label(page, "");
+    // LVGL borrows this buffer instead of keeping another secret heap allocation.
+    lv_label_set_text_static(words, recoveryDisplay);
+    button("Done", [](lv_event_t *) { hideRecovery(); });
+    recoveryShownAt = millis();
+    recoveryVisible = true;
 }
 void autoSettings(const String &text, const String &message) {
     DynamicJsonDocument d(512);
@@ -491,7 +544,13 @@ void handle(Engine::Message &m) {
     }
     if (diceGenerate)
         updateDice();
-    if (m.type == "settings") {
+    if (m.type == "keys") {
+        keysMenu();
+    } else if (m.type == "seed_pin") {
+        recoveryPin();
+    } else if (m.type == "seed_view") {
+        showRecovery(m.text);
+    } else if (m.type == "settings") {
         settingsMenu(m.text);
     } else if (m.type == "settings_setup") {
         settingsPin(true);
@@ -613,6 +672,10 @@ void setup() {
         status("Cannot start signing worker. Restart device.");
 }
 void loop() {
+    if (recoveryVisible && RecoveryView::expired(millis(), recoveryShownAt)) {
+        hideRecovery();
+        send("settings_close");
+    }
     if (auto m = Engine::take()) {
         handle(*m);
         Wallet::wipe(m->text);
