@@ -12,7 +12,9 @@ namespace {
 lv_obj_t *page = nullptr, *keyboard = nullptr, *statusLabel = nullptr;
 lv_obj_t *input1 = nullptr, *input2 = nullptr, *input3 = nullptr;
 lv_obj_t *brightnessSlider = nullptr, *brightnessLabel = nullptr;
-lv_obj_t *timeoutChoice = nullptr, *disableTimeout = nullptr, *themeChoice = nullptr;
+lv_obj_t *timeoutChoice = nullptr, *themeChoice = nullptr;
+DisplayPreferences::State savedDisplay, draftDisplay;
+bool displayPreview = false, refreshDisplayPreview = false;
 String phrase, requestId;
 char recoveryDisplay[512] = {};
 bool recoveryVisible = false, recoveryRequested = false;
@@ -27,6 +29,11 @@ void label(const String &text) {
     DeviceUI::label(page, text.c_str());
 }
 void screen(const String &title) {
+    if (displayPreview) {
+        displayPreview = refreshDisplayPreview = false;
+        Display::applyPreferences(savedDisplay);
+        DeviceUI::init(savedDisplay.dark);
+    }
     RecoveryView::clear(recoveryDisplay, sizeof(recoveryDisplay));
     recoveryVisible = recoveryRequested = false;
     diceRolls.clear();
@@ -381,11 +388,13 @@ void showRecovery(const String &recovery) {
     recoveryShownAt = millis();
     recoveryVisible = true;
 }
-void displaySettings(const String &text, const String &message) {
-    const auto prefs = DeviceSettings::parseDisplay(text);
-    Display::applyPreferences(prefs);
-    DeviceUI::init(prefs.dark);
+void renderDisplaySettings(const String &message = "") {
+    // Rebuild custom styles after a theme change, outside LVGL event dispatch.
+    displayPreview = false;
+    DeviceUI::init(draftDisplay.dark);
     screen("Display");
+    displayPreview = true;
+    const auto &prefs = draftDisplay;
     brightnessLabel = DeviceUI::label(page, "");
     lv_label_set_text_fmt(brightnessLabel, "Brightness: %u%%", unsigned(prefs.brightness));
     brightnessSlider = lv_slider_create(page);
@@ -393,36 +402,37 @@ void displaySettings(const String &text, const String &message) {
     lv_slider_set_range(brightnessSlider, 10, 100);
     lv_slider_set_value(brightnessSlider, prefs.brightness, LV_ANIM_OFF);
     lv_obj_add_event_cb(brightnessSlider, [](lv_event_t *) {
-        lv_label_set_text_fmt(brightnessLabel, "Brightness: %d%%",
-                              int(lv_slider_get_value(brightnessSlider)));
+        draftDisplay.brightness = lv_slider_get_value(brightnessSlider);
+        lv_label_set_text_fmt(brightnessLabel, "Brightness: %u%%",
+                              unsigned(draftDisplay.brightness));
+        auto preview = savedDisplay;
+        preview.brightness = draftDisplay.brightness;
+        Display::applyPreferences(preview);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     label("Display timeout");
     timeoutChoice = lv_dropdown_create(page);
     lv_obj_set_width(timeoutChoice, DeviceUI::contentWidth);
-    lv_dropdown_set_options(timeoutChoice, "15 seconds\n30 seconds\n1 minute\n2 minutes\n5 minutes");
+    lv_dropdown_set_options(timeoutChoice, "15 seconds\n30 seconds\n1 minute\n2 minutes\n5 minutes\nOff");
     for (unsigned i = 0; i < sizeof(DisplayPreferences::timeouts) / sizeof(uint16_t); ++i)
         if (DisplayPreferences::timeouts[i] == prefs.timeoutSeconds)
             lv_dropdown_set_selected(timeoutChoice, i);
-    disableTimeout = lv_checkbox_create(page);
-    lv_checkbox_set_text(disableTimeout, "Disable timeout");
-    lv_obj_set_width(disableTimeout, DeviceUI::contentWidth);
-    lv_obj_set_style_text_color(disableTimeout, lv_color_hex(DeviceUI::onAccent),
-                                LV_PART_INDICATOR | LV_STATE_CHECKED);
-    if (prefs.timeoutDisabled) {
-        lv_obj_add_state(disableTimeout, LV_STATE_CHECKED);
-        lv_obj_add_state(timeoutChoice, LV_STATE_DISABLED);
-    }
-    lv_obj_add_event_cb(disableTimeout, [](lv_event_t *) {
-        if (lv_obj_has_state(disableTimeout, LV_STATE_CHECKED))
-            lv_obj_add_state(timeoutChoice, LV_STATE_DISABLED);
-        else
-            lv_obj_clear_state(timeoutChoice, LV_STATE_DISABLED);
+    constexpr unsigned offIndex = sizeof(DisplayPreferences::timeouts) / sizeof(uint16_t);
+    if (prefs.timeoutDisabled) lv_dropdown_set_selected(timeoutChoice, offIndex);
+    lv_obj_add_event_cb(timeoutChoice, [](lv_event_t *) {
+        const auto selected = lv_dropdown_get_selected(timeoutChoice);
+        draftDisplay.timeoutDisabled = selected == offIndex;
+        if (!draftDisplay.timeoutDisabled)
+            draftDisplay.timeoutSeconds = DisplayPreferences::timeouts[selected];
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     label("Theme");
     themeChoice = lv_dropdown_create(page);
     lv_obj_set_width(themeChoice, DeviceUI::contentWidth);
     lv_dropdown_set_options(themeChoice, "Light\nDark");
     lv_dropdown_set_selected(themeChoice, prefs.dark ? 1 : 0);
+    lv_obj_add_event_cb(themeChoice, [](lv_event_t *) {
+        draftDisplay.dark = lv_dropdown_get_selected(themeChoice) == 1;
+        refreshDisplayPreview = true;
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     for (auto choice : {timeoutChoice, themeChoice}) {
         lv_obj_set_style_bg_color(choice, lv_color_hex(DeviceUI::surface), 0);
         lv_obj_set_style_text_color(choice, lv_color_hex(DeviceUI::text), 0);
@@ -432,19 +442,23 @@ void displaySettings(const String &text, const String &message) {
         lv_obj_set_style_text_color(list, lv_color_hex(DeviceUI::onAccent),
                                     LV_PART_SELECTED | LV_STATE_CHECKED);
     }
-    DeviceUI::label(page, "Changes apply when saved. Security locks stay active.",
+    DeviceUI::label(page, "Brightness and theme preview instantly. Save to keep changes.",
                      &lv_font_montserrat_14, DeviceUI::muted);
     if (message.length()) label(message);
-    button("Save display settings", [](lv_event_t *) {
-        DisplayPreferences::State updated;
-        updated.brightness = lv_slider_get_value(brightnessSlider);
-        updated.timeoutSeconds = DisplayPreferences::timeouts[lv_dropdown_get_selected(timeoutChoice)];
-        updated.timeoutDisabled = lv_obj_has_state(disableTimeout, LV_STATE_CHECKED);
-        updated.dark = lv_dropdown_get_selected(themeChoice) == 1;
-        send("display_save", DeviceSettings::displayJson(updated));
+    button("Save Changes", [](lv_event_t *) {
+        if (send("display_save", DeviceSettings::displayJson(draftDisplay))) {
+            for (auto control : {brightnessSlider, timeoutChoice, themeChoice})
+                lv_obj_add_state(control, LV_STATE_DISABLED);
+        }
     });
     button("Back to Settings", [](lv_event_t *) { send("settings_open"); },
            DeviceUI::Tone::Secondary);
+}
+void displaySettings(const String &text, const String &message) {
+    savedDisplay = draftDisplay = DeviceSettings::parseDisplay(text);
+    refreshDisplayPreview = false;
+    Display::applyPreferences(savedDisplay);
+    renderDisplaySettings(message);
 }
 void autoSettings(const String &text, const String &message) {
     DynamicJsonDocument d(512);
@@ -601,6 +615,10 @@ void handle(Engine::Message &m) {
     if (m.type == "progress" || m.type == "status") {
         status(m.text);
         return; // Keep controls disabled until the worker finishes the command.
+    }
+    if (displayPreview) {
+        for (auto control : {brightnessSlider, timeoutChoice, themeChoice})
+            lv_obj_clear_state(control, LV_STATE_DISABLED);
     }
     if (dicePad)
         lv_obj_clear_state(dicePad, LV_STATE_DISABLED);
@@ -760,6 +778,13 @@ void loop() {
         delete m;
     }
     lv_timer_handler();
+    if (displayPreview && refreshDisplayPreview) {
+        refreshDisplayPreview = false;
+        const auto scrollY = lv_obj_get_scroll_y(page);
+        renderDisplaySettings();
+        lv_obj_update_layout(page);
+        lv_obj_scroll_to_y(page, scrollY, LV_ANIM_OFF);
+    }
     Display::checkBacklightTimeout();
     delay(5);
 }

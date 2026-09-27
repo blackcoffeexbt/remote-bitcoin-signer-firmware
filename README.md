@@ -128,10 +128,11 @@ The reference project is unchanged. Its ArduinoGFX/AXS15231B display and touch i
 ## Display preferences
 
 Open **Settings → Display** after entering the settings PIN. Adjust brightness
-from 10–100%, choose a timeout (15 seconds, 30 seconds, 1, 2 or 5 minutes), check
-**Disable timeout** to keep the backlight on, and choose **Light** or **Dark**.
-Tap **Save display settings** to apply and persist all choices across restarts;
-Back to Settings discards unsaved changes. Defaults are 100% brightness,
+from 10–100%, choose a timeout (15 seconds, 30 seconds, 1, 2 or 5 minutes, or **Off** to keep
+the backlight on), and choose **Light** or **Dark**. Brightness changes while
+dragging the slider; selecting a theme previews it immediately. Tap **Save Changes**
+to apply the timeout and persist all choices across restarts. Back to Settings
+or session expiry discards unsaved changes and restores the saved appearance. Defaults are 100% brightness,
 30 seconds with timeout enabled, and Light. A touch wakes the screen at the saved
 brightness; the wake gesture is consumed so it cannot activate a hidden control.
 Display preferences do not disable the settings session lock or recovery-phrase

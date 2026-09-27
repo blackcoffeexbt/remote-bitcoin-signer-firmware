@@ -128,8 +128,9 @@ requests and cancels pending work from that client. Forgetting browser storage
 does not revoke the device pairing. Old approval callbacks are request-ID-bound.
 
 Settings → Display stores brightness (10–100%), display timeout (15/30/60/120/300
-seconds), a Disable timeout checkbox, and Light/Dark theme. Save applies the
-preferences and retains them across reboot. Defaults are full brightness,
+seconds or Off), and Light/Dark theme. Brightness and theme preview immediately;
+Save Changes applies the timeout and retains all preferences across reboot. Leaving
+the screen or session expiry restores saved preferences if changes were not saved. Defaults are full brightness,
 30 seconds with timeout enabled, and Light. Display timeout is independent of
 settings authorization and recovery-phrase expiry; disabling it does not extend
 either security limit. These preferences are local-only and add no wire methods.
