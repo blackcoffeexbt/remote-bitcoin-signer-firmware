@@ -266,7 +266,7 @@ void verifySeed(unsigned word = 1) {
 }
 void settingsMenu(const String &text = "") {
     screen("Settings");
-    DeviceUI::brand(page);
+    DeviceUI::endorsedBrand(page, true);
     if (text.length())
         label(text);
     navigation("Network", "Wi-Fi and Nostr relays", LV_SYMBOL_WIFI,
@@ -665,7 +665,7 @@ void setup() {
     Display::init();
     DeviceUI::init();
     screen("Starting Argus...");
-    DeviceUI::brand(page, true);
+    DeviceUI::endorsedBrand(page);
     DeviceUI::label(page, "Remote access. Secret secured.", &lv_font_montserrat_14, DeviceUI::muted);
     lv_timer_handler();
     if (!Engine::start())

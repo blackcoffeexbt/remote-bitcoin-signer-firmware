@@ -1,6 +1,7 @@
 #pragma once
 #include <lvgl.h>
 #include "argus_logo.h"
+#include "lnbits_logo.h"
 
 // Shared Argus light styling for the 320 x 480 display.
 namespace DeviceUI {
@@ -42,6 +43,33 @@ inline lv_obj_t *brand(lv_obj_t *parent, bool large = false) {
     lv_obj_set_width(name, 170);
     lv_obj_align(name, LV_ALIGN_LEFT_MID, large ? 110 : 54, 0);
     return row;
+}
+// Stacked endorsement for the splash and Settings; the compact form saves room
+// for the settings controls on the device's small display.
+inline lv_obj_t *endorsedBrand(lv_obj_t *parent, bool compact = false) {
+    auto group = lv_obj_create(parent);
+    lv_obj_remove_style_all(group);
+    lv_obj_set_size(group, contentWidth, compact ? 94 : 190);
+    lv_obj_clear_flag(group, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    if (compact) {
+        auto heading = brand(group);
+        lv_obj_set_width(heading, 158);
+        lv_obj_align(heading, LV_ALIGN_TOP_MID, 0, 0);
+    } else {
+        auto mark = lv_img_create(group);
+        lv_img_set_src(mark, &argusLogoImage());
+        lv_obj_align(mark, LV_ALIGN_TOP_MID, 0, 0);
+        auto name = label(group, "Argus", &lv_font_montserrat_28);
+        lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 100);
+    }
+    auto by = label(group, "by", &lv_font_montserrat_12, muted);
+    lv_obj_set_style_text_align(by, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(by, LV_ALIGN_TOP_MID, 0, compact ? 48 : 142);
+    auto logo = lv_img_create(group);
+    lv_img_set_src(logo, &lnbitsLogoImage());
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, compact ? 68 : 162);
+    return group;
 }
 inline lv_obj_t *screen(const char *title) {
     lv_obj_clean(lv_scr_act());
