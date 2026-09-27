@@ -166,7 +166,8 @@ static void publish(const String &wire) {
 static void reply(const String &peer, const String &id, const String &method, const String &hash,
                   const String &result, const String &error, time_t expiry,
                   const String &status = "", unsigned sequence = 0, const String &reason = "") {
-    DynamicJsonDocument d(70000);
+    // Errors and progress must remain deliverable while the request/PSBT is in memory.
+    DynamicJsonDocument d(error.length() || status.length() ? 2048 : 70000);
     d["protocol"] = "bitcoin-signer";
     d["version"] = 1;
     d["id"] = id;
@@ -212,12 +213,13 @@ static String publicAccount() {
 static void rejectPending(const char *reason) {
     if (!pending.id.length())
         return;
-    auto p = pending;
+    auto p = std::move(pending); // Do not allocate a second PSBT during failure cleanup.
     pending = Pending{};
     if (p.method == "sign_psbt")
         account.close();
-    reply(p.peer, p.id, p.method, p.hash, "{}", reason, p.expiry);
+    // Local termination must not depend on allocating/encrypting a relay response.
     post(p.method == "sign_psbt" ? "locked" : "settings", reason);
+    reply(p.peer, p.id, p.method, p.hash, "{}", reason, p.expiry);
 }
 static String outputAddress(const Bytes &b) {
     Script script(b.data(), b.size());
@@ -384,7 +386,9 @@ static void receive(const uint8_t *payload, size_t length) {
                 wipe(phrase);
                 wipe(transport);
                 account.close();
-                rejectPending(ex.what());
+                // Preserve the credential error and attempt both bound responses even
+                // if the signing response cannot be constructed or published.
+                try { rejectPending(ex.what()); } catch (...) {}
                 throw;
             }
             return;

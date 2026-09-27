@@ -656,8 +656,8 @@ void handle(Engine::Message &m) {
         lockScreen(m.text);
     } else if (m.type == "pin_required") {
         requestId = m.id;
-        screen("PIN required in LNbits");
-        label("Enter your PIN in the paired LNbits wallet to unlock this signing request.");
+        screen("PIN required");
+        label("Enter your wallet PIN in the paired remote client to unlock this signing request.");
         button(
             "Reject", [](lv_event_t *) { send("reject", "", "", requestId); },
             DeviceUI::Tone::Danger);

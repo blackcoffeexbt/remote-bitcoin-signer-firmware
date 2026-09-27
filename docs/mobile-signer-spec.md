@@ -529,3 +529,21 @@ Backgrounding invalidates active operations, closes connections, clears PIN and
 pairing input, and covers the UI. Returning never resumes signing or broadcasting
 automatically. Signed-payment recovery, explicit send confirmation, account
 pinning and the existing wire contract remain unchanged.
+
+
+### Incorrect remote wallet PIN
+
+A failed wallet-PIN verification ends that signing request, locks the signer,
+and exits its PIN-required screen even if sending a relay response fails. Both
+bound errors carry the remaining attempts. Mobile can terminate from either the
+signing error or its bound unlock credential error, including after Decrypting
+wallet progress. It displays “Incorrect device PIN or damaged wallet credential”,
+the tries remaining, an explicit warning that the device will wipe itself after
+that many more failed tries, and recovery-phrase guidance. After the displayed
+cooldown, **Request signing** starts a fresh request and prompts for a new PIN.
+Zero remaining reports wiping and restoration/re-pairing instead of retrying.
+No PIN is retained, automatically retried, or applied to a different request.
+Device acceptance: enter a wrong PIN, confirm the locked screen and matching
+warning in the phone, wait the cooldown, retry and confirm normal approval and
+signing. Verify late/duplicate error delivery does not affect the new request.
+These source changes and automated tests do not establish physical verification.

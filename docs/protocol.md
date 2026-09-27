@@ -110,7 +110,16 @@ device locked and retries; it never returns to normal operation.
 Failure messages include the number of attempts remaining before wipe (15 after
 the first failure, 1 after the fifteenth). Settings failures appear on the device;
 remote wallet failures are sent in both the bound signing and unlock errors and
-shown locally. The final wipe notice is shown locally; relay delivery is best
+shown locally. A failed verification terminates the signing attempt and returns
+the device to its locked screen before relay response construction. Response
+failure must not prevent local cleanup or the attempt to send the unlock error.
+Mobile accepts either authenticated, request-bound credential error as terminal
+for that signing attempt (regardless of delivery order), displays the remaining
+attempts and explicit wipe/recovery warning, and clears PIN input. After the
+cooldown, the user taps **Request signing** again to create a fresh signing
+request and enter a new PIN; retries are never automatic. Cooldown refusals on
+an existing PIN request remain retryable without consuming an attempt.
+The final wipe notice is shown locally; relay delivery is best
 effort and does not delay erasure. Exponential cooldown remains 2–1,024 seconds
 and is reapplied on reboot. Cooldown refusals, unmatched/unauthenticated requests,
 replays and errors after credential verification do not consume PIN attempts.
