@@ -395,7 +395,7 @@ static void receive(const uint8_t *payload, size_t length) {
                         request["params"]["token"] == pairToken,
                     "Pairing code expired or incorrect");
             require(clients.size() < 8 || clients.count(peer), "Maximum 8 clients");
-            String label = request["params"]["label"] | "Browser";
+            String label = request["params"]["label"] | "Device";
             require(label.length() > 0 && label.length() <= 40, "Invalid client name");
             for (char c : label)
                 require(c >= 32 && c <= 126, "Use a plain text client name");
@@ -671,7 +671,7 @@ static void command(Message &m) {
         try {
             if (p.method == "pair") {
                 requireSettings();
-                post("progress", "Saving browser pairing...");
+                post("progress", "Saving...");
                 clients[p.peer] = p.label;
                 try {
                     saveClients();
@@ -680,11 +680,11 @@ static void command(Message &m) {
                     throw;
                 }
                 pairToken = "";
-                post("progress", "Sending public account to paired browser...");
+                post("progress", "Sending public account to paired device...");
                 reply(p.peer, p.id, p.method, "", publicAccount(), "", p.expiry);
             }
             pending = Pending{};
-            post("settings", "Browser paired");
+            post("settings", "Device paired");
         } catch (const std::exception &ex) {
             pending = Pending{};
             if (p.method == "sign_psbt")

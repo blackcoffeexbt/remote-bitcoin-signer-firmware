@@ -180,17 +180,17 @@ bool send(const String &type, const String &text = "", const String &data = "",
     else if (type == "network_cancel")
         status("Closing setup Wi-Fi...");
     else if (type == "pair_code")
-        status("Creating browser pairing code...");
+        status("Creating pairing code...");
     else if (type == "clients")
-        status("Loading paired browsers...");
+        status("Loading connections...");
     else if (type == "revoke")
-        status("Revoking browser access...");
+        status("Revoking connection...");
     else if (type == "lock")
         status("Locking wallet and clearing keys...");
     else if (type == "approve")
         status("Processing your approval...");
     else if (type == "reject")
-        status("Rejecting request and notifying browser...");
+        status("Rejecting request and notifying client...");
     if (checkingPin && statusLabel)
         lv_obj_scroll_to_view(statusLabel, LV_ANIM_OFF);
     return true;
@@ -278,7 +278,7 @@ void settingsMenu(const String &text = "") {
                    [](lv_event_t *) { send("keys_open"); });
         navigation("Connect", "Connect a remote control", LV_SYMBOL_PLUS,
                    [](lv_event_t *) { send("pair_code"); });
-        navigation("Paired browsers", "Manage connections", LV_SYMBOL_LIST,
+        navigation("Paired devices", "Manage connections", LV_SYMBOL_LIST,
                    [](lv_event_t *) { send("clients"); });
     }
     button(Wallet::exists() ? "Close Settings" : "Continue wallet setup",
@@ -667,7 +667,13 @@ void setup() {
     screen("Starting Argus...");
     DeviceUI::endorsedBrand(page);
     DeviceUI::label(page, "Remote access. Secret secured.", &lv_font_montserrat_14, DeviceUI::muted);
-    lv_timer_handler();
+    lv_refr_now(nullptr);
+    const uint32_t splashShownAt = millis();
+    // Keep the branding visible before the worker can open the next screen.
+    while (millis() - splashShownAt < 3000U) {
+        lv_timer_handler();
+        delay(5);
+    }
     if (!Engine::start())
         status("Cannot start signing worker. Restart device.");
 }
