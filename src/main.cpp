@@ -687,7 +687,7 @@ void handle(Engine::Message &m) {
         for (int i = 1; i <= 12; i++)
             s += String(i) + ". " + wordAt(i) + "\n";
         label(s);
-        button("I wrote it down", [](lv_event_t *) { verifySeed(); });
+        button("I've written it down", [](lv_event_t *) { verifySeed(); });
         button(
             "Cancel",
             [](lv_event_t *) {
