@@ -698,7 +698,7 @@ void handle(Engine::Message &m) {
     } else if (m.type == "code") {
         screen("Connect remote client");
         label("Scan this QR code with your remote client to start the pairing process.");
-        auto qr = lv_qrcode_create(page, 280, lv_color_black(), lv_color_white());
+        auto qr = lv_qrcode_create(page, DeviceUI::qrSize, lv_color_black(), lv_color_white());
         lv_qrcode_update(qr, m.text.c_str(), m.text.length());
         button(
             "Back to Settings", [](lv_event_t *) { send("settings_open"); },

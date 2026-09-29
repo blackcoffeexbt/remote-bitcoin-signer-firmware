@@ -15,7 +15,11 @@ namespace Display {
     Arduino_DataBus *bus = nullptr;
     Arduino_GFX *g = nullptr;
     Arduino_Canvas *gfx = nullptr;
-    AXS15231B_Touch touch(Touch_SCL, Touch_SDA, Touch_INT, Touch_ADDR, TFT_rot);
+#if defined(BOARD_LILYGO_AMOLED_TOUCH)
+    static CST816Touch touch;
+#else
+    static AXS15231B_Touch touch(Touch_SCL, Touch_SDA, Touch_INT, Touch_ADDR, TFT_rot);
+#endif
     
     // Display configuration
     static const uint16_t screenWidth = TFT_WIDTH;
@@ -46,11 +50,20 @@ namespace Display {
         Serial.println("=== Initializing ArduinoGFX display ===");
         
         try {
+#if defined(BOARD_LILYGO_AMOLED_TOUCH)
+            pinMode(TFT_POWER, OUTPUT);
+            digitalWrite(TFT_POWER, HIGH);
+            delay(100);
+#endif
             // Initialize ArduinoGFX display
             Serial.println("Creating bus...");
             bus = new Arduino_ESP32QSPI(TFT_CS, TFT_SCK, TFT_SDA0, TFT_SDA1, TFT_SDA2, TFT_SDA3);
             Serial.println("Creating display...");
+#if defined(BOARD_LILYGO_AMOLED_TOUCH)
+            g = new Arduino_RM67162(bus, TFT_RST, TFT_rot);
+#else
             g = new Arduino_AXS15231B(bus, GFX_NOT_DEFINED, 0, false, TFT_res_W, TFT_res_H);
+#endif
             Serial.println("Creating canvas...");
             gfx = new Arduino_Canvas(TFT_res_W, TFT_res_H, g, 0, 0, TFT_rot);
             
@@ -63,8 +76,10 @@ namespace Display {
             
             // Initialize backlight pin and turn on backlight
             preferences = DeviceSettings::loadDisplay();
+#if !defined(BOARD_LILYGO_AMOLED_TOUCH)
             ledcSetup(backlightChannel, 5000, 8);
             ledcAttachPin(TFT_BL, backlightChannel);
+#endif
             turnOnBacklight();
             initBacklightTimeout();
             
@@ -87,10 +102,12 @@ namespace Display {
             } else {
                 Serial.println("Touch controller initialized successfully");
                 
+#if !defined(BOARD_LILYGO_AMOLED_TOUCH)
                 // Configure touch calibration
                 touch.enOffsetCorrection(true);
                 touch.setOffsets(Touch_X_min, Touch_X_max, TFT_res_W-1, Touch_Y_min, Touch_Y_max, TFT_res_H-1);
                 Serial.println("Touch calibration configured");
+#endif
             }
             
             // Initialize LVGL
@@ -269,7 +286,7 @@ namespace Display {
         }
         
         // Calculate QR code size - LVGL handles sizing automatically
-        uint16_t qr_size = 280; // QR pixel size
+        uint16_t qr_size = TFT_WIDTH < 312 ? TFT_WIDTH - 32 : 280; // QR pixel size
         
         Serial.printf("Creating LVGL QR code with size %dx%d for %d character invoice\n", 
                      qr_size, qr_size, invoice.length());
@@ -338,7 +355,7 @@ namespace Display {
         
         lv_label_set_text(label, displayText.c_str());
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-        lv_obj_set_width(label, 280);
+        lv_obj_set_width(label, TFT_WIDTH - 32);
         
         // Hide spinner
         lv_obj_t* spinner = nullptr;
@@ -359,14 +376,29 @@ namespace Display {
         qr_canvas = canvas;
     }
     
+    static void writeBrightness(uint8_t value) {
+#if defined(BOARD_LILYGO_AMOLED_TOUCH)
+        // AMOLED has no PWM backlight. Keep touch powered while the panel is dark.
+        // Avoid a QSPI transaction for every touch poll at unchanged brightness.
+        static int previous = -1;
+        if (!bus || previous == value) return;
+        bus->beginWrite();
+        bus->writeC8D8(RM67162_BRIGHTNESS, value);
+        bus->endWrite();
+        previous = value;
+#else
+        ledcWrite(backlightChannel, value);
+#endif
+    }
+
     void turnOffBacklight() {
         Serial.println("Turning off display backlight");
-        ledcWrite(backlightChannel, 0);
+        writeBrightness(0);
         backlight_on = false;
     }
     
     void turnOnBacklight() {
-        ledcWrite(backlightChannel, (uint32_t(preferences.brightness) * 255U + 50U) / 100U);
+        writeBrightness((uint32_t(preferences.brightness) * 255U + 50U) / 100U);
         backlight_on = true;
     }
 

@@ -1,12 +1,14 @@
 #pragma once
 #include "bitcoin_network.h"
+#include "dispcfg.h"
 #include <lvgl.h>
 #include "argus_logo.h"
 #include "lnbits_logo.h"
 
-// Shared Argus theme styling for the 320 x 480 display.
+// Shared Argus theme styling for each board's portrait display.
 namespace DeviceUI {
-constexpr int width = 320, height = 480, inset = 16, contentWidth = width - inset * 2;
+constexpr int width = TFT_res_W, height = TFT_res_H, inset = 16, contentWidth = width - inset * 2;
+constexpr int qrSize = contentWidth < 280 ? contentWidth : 280;
 constexpr int numericKeyboardHeight = 240, textKeyboardHeight = 200;
 inline uint32_t background = 0xF5F8F7, surface = 0xFFFFFF, raised = 0xE6F1EE;
 inline uint32_t border = 0xD6E3E0, mint = 0x006C67, mintPressed = 0x005550;
@@ -54,7 +56,7 @@ inline lv_obj_t *brand(lv_obj_t *parent, bool large = false) {
     lv_img_set_zoom(image, large ? 256 : 107);
     lv_obj_align(image, LV_ALIGN_LEFT_MID, large ? 0 : -28, 0);
     auto name = label(row, "Argus", &lv_font_montserrat_28);
-    lv_obj_set_width(name, 170);
+    lv_obj_set_width(name, contentWidth - (large ? 110 : 54));
     lv_obj_align(name, LV_ALIGN_LEFT_MID, large ? 110 : 54, 0);
     return row;
 }

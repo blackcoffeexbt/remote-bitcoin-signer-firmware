@@ -6,7 +6,11 @@
 #include <lvgl.h>
 #include "pincfg.h"
 #include "dispcfg.h"
+#if defined(BOARD_LILYGO_AMOLED_TOUCH)
+#include "CST816_touch.h"
+#else
 #include "AXS15231B_touch.h"
+#endif
 
 // Portrait display constants
 #define TFT_WIDTH   TFT_res_W
@@ -17,7 +21,7 @@ namespace Display {
     extern Arduino_DataBus *bus;
     extern Arduino_GFX *g;
     extern Arduino_Canvas *gfx;
-    extern AXS15231B_Touch touch;
+
 
     // Initialization and cleanup
     void init();

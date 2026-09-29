@@ -93,3 +93,30 @@ and its access point is named `Argus-…`. Wire protocol and NVS keys are unchan
   be reached by scrolling. Minimum free UI heap among these renders: 13,544 bytes.
 - No hardware was flashed. Physical display/touch checks and device-backed
   signing/approval interoperability remain unverified by this visual update.
+
+
+## LilyGO AMOLED Touch board support (29 September 2026)
+
+Added the `lilygo-t-display-s3-amoled-touch` environment for the original
+1.91-inch QSPI model. It uses RM67162 display output, CST816 touch, GPIO38
+power enable, register-based brightness and a 240 × 536 portrait layout.
+The Guition environment and wire/signing behavior are unchanged.
+
+Verification for this change:
+
+- LilyGO Mainnet and Testnet4 builds and the original Guition Testnet4 build pass.
+- CST816 coordinate/packet and contact-state tests pass with address/undefined
+  behavior sanitizers, including corners, home-key exclusion, lifts, invalid
+  packets, transient/continued read failures and stale contact tails.
+- Existing touch-state and display-preference sanitizer tests pass.
+- Initial-provisioning script syntax and unsupported-board rejection pass.
+- With the user's explicit authorization, the new connected board was flashed
+  with Testnet4 without a backup. Its 16 MB flash and 8 MB PSRAM were identified;
+  upload hashes verified. Startup reported successful display and LVGL input
+  initialization and detected CST816T chip ID `0xB5`. The signing worker started.
+  First-boot missing-NVS-namespace messages are expected before settings exist.
+
+Serial startup does not establish visual quality, touch alignment, QR scanning,
+brightness behavior or a live signing/payment flow. The physical acceptance
+checklist is in [the board guide](lilygo-amoled-touch.md). No wallet was created,
+PIN/seed captured, transaction signed or broadcast during this verification.

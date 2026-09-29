@@ -1,4 +1,4 @@
-# Argus — Guition JC3248W535
+# Argus — ESP32-S3 touchscreen signer
 
 Argus uses a light cloud/white theme with teal actions and ink text. Its device-and-
 signal logo appears at startup, on the home screen and in Settings. Network setup
@@ -9,8 +9,8 @@ A dedicated ESP32-S3 / PlatformIO **Mainnet / Testnet4** signer. The mobile wall
 
 ## What this repository contains
 
-Firmware for the **Guition JC3248W535 ESP32-S3**, configured for 16 MB flash and
-8 MB PSRAM. It keeps the Bitcoin wallet on the device and connects to remote
+Firmware for the **Guition JC3248W535** and **LilyGO T-Display-S3 AMOLED
+1.91-inch QSPI Touch**, both configured for 16 MB flash and 8 MB PSRAM. It keeps the Bitcoin wallet on the device and connects to remote
 clients using signed, NIP-44 encrypted Nostr messages.
 
 - Create or restore a BIP39 wallet and protect it with a wallet PIN.
@@ -22,6 +22,25 @@ clients using signed, NIP-44 encrypted Nostr messages.
 
 **Mainnet is the default; Testnet4 is available at build time.** This is experimental firmware. Automated tests and successful
 builds do not establish physical-device security or end-to-end interoperability.
+
+## Supported boards
+
+| Board | PlatformIO environment | Portrait display | Touch |
+| --- | --- | --- | --- |
+| Guition JC3248W535 (default) | `esp32-s3-n16r8v` | 320 × 480, AXS15231B | AXS15231B |
+| LilyGO T-Display-S3 AMOLED 1.91-inch QSPI Touch | `lilygo-t-display-s3-amoled-touch` | 240 × 536, RM67162 | CST816 |
+
+Build the LilyGO version with:
+
+```sh
+pio run -e lilygo-t-display-s3-amoled-touch
+```
+
+Both environments use `[bitcoin] testnet4`; check its value before building or
+installing. The LilyGO profile is for the original QSPI Touch board, **not** the
+Plus, SPI, non-touch, or other AMOLED sizes. See the [LilyGO board guide](docs/lilygo-amoled-touch.md)
+for pin mappings, installation and hardware checks. Existing Guition builds keep
+their original display and touch drivers.
 
 ## Bitcoin network
 
